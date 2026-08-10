@@ -94,6 +94,13 @@ class SensitivityRequest(BaseModel):
     horizon_h: float = 24.0
     n_base: int = 2048
 
+class TreatmentPolicyRequest(BaseModel):
+    """Optimal state-dependent treatment policy."""
+    discount: float = 0.95
+    state_rewards: dict[str, float] | None = None
+    action_costs: dict[str, float] | None = None
+    actions: list[str] | None = None
+
 class BayesianObservation(BaseModel):
     time_h: float
     concentration_ng_ml: float
@@ -593,4 +600,41 @@ def run_sensitivity(req: SensitivityRequest, db: Session = Depends(get_db)) -> d
         'n_model_evaluations': res.n_model_evaluations,
         'converged': res.converged,
         'warnings': res.warnings,
+    }
+
+
+@router.post('/treatment-policy')
+def run_treatment_policy(req: TreatmentPolicyRequest) -> dict[str, Any]:
+    """Solve the patient-state chain as a Markov decision process.
+
+    Turns the descriptive Markov model prescriptive: instead of predicting
+    where one fixed regimen leads, it returns which drug class is optimal in
+    each clinical state, and how much that state-dependent rule is worth over
+    committing to a single class.
+    """
+    from services.treatment_mdp import solve_treatment_mdp
+
+    try:
+        res = solve_treatment_mdp(
+            gamma=req.discount,
+            state_rewards=req.state_rewards,
+            action_costs=req.action_costs,
+            actions=req.actions,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    return {
+        'states': res.states,
+        'actions': res.actions,
+        'policy': res.policy,
+        'value_function': res.value_function,
+        'q_values': res.q_values,
+        'discount': res.discount,
+        'n_iterations': res.n_iterations,
+        'converged': res.converged,
+        'value_iteration_agrees': res.value_iteration_agrees,
+        'constant_policy_values': res.policy_values_vs_fixed,
+        'best_constant_action': res.best_fixed_action,
+        'advantage_over_best_constant': res.advantage_over_best_fixed,
     }

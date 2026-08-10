@@ -34,7 +34,8 @@
 16. [Hepatic Extraction](#xvi-hepatic-extraction)
 17. [Optimal Experimental Design](#xvii-optimal-experimental-design)
 18. [Global Sensitivity Analysis](#xviii-global-sensitivity-analysis)
-19. [References](#references)
+19. [Treatment Policy as a Markov Decision Process](#xix-treatment-policy-as-a-markov-decision-process)
+20. [References](#references)
 
 ---
 
@@ -901,6 +902,79 @@ $V_d$; clearance only becomes identifiable once observation extends over a
 meaningful fraction of the elimination phase. That is the same conclusion
 section XVII reaches from the information matrix, arrived at from the opposite
 direction.
+
+---
+
+## XIX. Treatment Policy as a Markov Decision Process
+
+Section XI models the patient-state chain descriptively: given a fixed regimen,
+where does the patient end up? Adding a choice at each state and a reward makes
+the same structure prescriptive, and the answer becomes a *policy* rather than
+a prediction.
+
+### 19.1 The decision problem
+
+An MDP is $(\mathcal{S}, \mathcal{A}, P, R, \gamma)$. The states are the six
+clinical states already defined; the actions are the drug classes plus
+`none`, which is watchful waiting. `none` has to be available, otherwise the
+optimal policy could never be "do nothing", which is a real clinical answer in
+remission.
+
+The transition model $P(s' \mid s, a)$ is obtained by applying the drug-class
+effects of action $a$ to the baseline chain, so the MDP inherits everything the
+existing model already encodes. Only the decision layer is new.
+
+The reward separates the value of *being somewhere* from the cost of *doing
+something*:
+
+$$
+R(s, a) = \underbrace{r(s)}_{\text{clinical value of the state}} - \underbrace{c(a)}_{\text{weekly treatment burden}}
+$$
+
+Without $c(a)$ the optimiser would always choose the most aggressive agent,
+because in this model more treatment would never cost anything.
+
+### 19.2 Two solvers, cross-checked
+
+**Value iteration** applies the Bellman optimality operator
+
+$$
+(TV)(s) = \max_{a}\left[ R(s,a) + \gamma \sum_{s'} P(s' \mid s, a) V(s') \right]
+$$
+
+which is a $\gamma$-contraction in the sup norm, so it converges geometrically
+from any starting point to the unique fixed point $V^\star$.
+
+**Policy iteration** alternates exact evaluation, solving the linear system
+
+$$
+(I - \gamma P_\pi) V_\pi = R_\pi
+$$
+
+with greedy improvement $\pi'(s) = \arg\max_a Q_\pi(s,a)$. Because evaluation
+is exact and there are finitely many policies, it *terminates* rather than
+merely converging; on this problem it does so in two iterations.
+
+Both are run and their agreement is reported rather than assumed. They are
+independent routes to the same unique solution, so disagreement would mean one
+of them is wrong, and the tests assert both that they match and that the
+returned $V$ genuinely satisfies the Bellman equation.
+
+### 19.3 What the policy says
+
+The optimal policy is state-dependent: SSRI in partial response, an atypical
+antipsychotic in relapse, and watchful waiting in remission and stable states
+where the burden of treatment outweighs its marginal benefit. Its value is
+compared against every **constant** policy, which is closer to how regimens are
+actually chosen than a state-dependent rule, and it beats the best of them
+(constant SSRI) by roughly 7 utility units per state.
+
+Two honest limitations. The values are on an arbitrary utility scale, so only
+differences between policies are meaningful, not the absolute numbers. And the
+transition model does not encode that treatment helps a patient *leave* the
+hospitalised state, which is why the policy recommends `none` there; that is a
+property of the seeded chain rather than a clinical claim, and it would change
+if the transition data did.
 
 ---
 
