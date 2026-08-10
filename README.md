@@ -443,8 +443,7 @@ flowchart LR
     UI["React + Tailwind + D3.js + Recharts"]
   end
   subgraph vercel [Vercel - default]
-    CDN[Static SPA from frontend/dist]
-    FN["Python function - FastAPI, api/index.py"]
+    FN["Python function - FastAPI, api/index.py<br/>serves /api/* and the built SPA"]
     MEM[(In-memory SQLite - seeded at cold start)]
   end
   subgraph compose [Docker Compose - optional, local]
@@ -452,8 +451,7 @@ flowchart LR
     API["FastAPI - interaction engine + PK solver"]
     PG[(PostgreSQL - durable storage)]
   end
-  UI --> CDN
-  CDN -->|/api/*| FN
+  UI --> FN
   FN --> MEM
   FN -->|scipy.solve_ivp| ODE[ODE Solver]
   UI -.-> NG
@@ -497,12 +495,24 @@ no environment variables, and no external services.
 vercel deploy
 ```
 
+| Service | URL |
+|---------|-----|
+| App | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/ |
+| API (Swagger) | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/docs |
+| API (ReDoc) | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/redoc |
+| Deploy health check | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/api/__status |
+
 `vercel.json` wires it up:
 
-- `frontend/` is built with Vite and served as a static SPA from `frontend/dist`
-- `api/index.py` exposes the FastAPI app as a Python serverless function
-- `/api/*` and `/health` are rewritten to that function; everything else falls
-  through to `index.html` so client-side routes deep-link correctly
+- `frontend/` is built with Vite into `frontend/dist`
+- `api/index.py` exposes the FastAPI app, which serves **both** the API and the
+  built SPA. `includeFiles` puts `backend/` and `frontend/dist/` in the
+  function bundle.
+- There are **no rewrites**. Vercel detects this as a FastAPI backend project
+  and routes every request to the application, so a rewrite pointing at
+  `/index.html` is handed straight back to FastAPI and 404s. Instead the app
+  mounts `/assets` and falls back to `index.html` for any non-API path, which
+  is what makes client-side routes deep-link correctly.
 
 Two design changes make the API work on serverless, where a request cannot rely
 on state written by a previous one:
@@ -568,6 +578,10 @@ docker compose up --build
 | Frontend | http://localhost:5173 |
 | API (Swagger) | http://localhost:8000/docs |
 | PostgreSQL | localhost:5433 (user: `neurotrace`, db: `neurotrace`) |
+
+Docker Compose keeps the three-service split, with Nginx serving the SPA and
+Postgres for durable storage. The Vercel deployment differs: there the single
+FastAPI application serves both the API and the built SPA (see below).
 
 The database is automatically seeded on first API startup with 50 medications, 78 CYP450 profiles, 39 interactions, and 5 clinical scenarios.
 

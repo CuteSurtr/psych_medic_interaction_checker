@@ -31,7 +31,8 @@ if str(BACKEND) not in sys.path:
 from main import app  # noqa: E402  - must stay top level, see module docstring
 
 from database.seed_db import create_tables, seed_if_empty  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 # Seeding is the one startup step that touches state, so it is the one that can
 # fail at runtime rather than import time. Report it instead of taking the
@@ -58,29 +59,70 @@ def _status() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Single-page app
+#
+# Vercel routes every request to this application, not just /api/*, so the
+# built frontend has to be served from here. A rewrite to /index.html does not
+# work: the platform hands that path straight back to this app, which has no
+# such route, and the result is a 404 on the site root.
+#
+# These routes are registered after `main` has attached the API routers, and
+# FastAPI matches in registration order, so the catch-all below can never
+# shadow an API endpoint.
+# ---------------------------------------------------------------------------
+
+DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+INDEX_HTML = DIST / "index.html"
+
+if (DIST / "assets").is_dir():
+    # Vite emits content-hashed filenames, so these are safe to cache forever.
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(DIST / "assets")),
+        name="assets",
+    )
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def _spa(full_path: str):
+    """Serve the SPA shell for any non-API path so client-side routing works."""
+    if full_path.startswith("api/"):
+        return JSONResponse(status_code=404, content=_not_found_payload("/" + full_path))
+
+    candidate = (DIST / full_path) if full_path else None
+    if candidate is not None and candidate.is_file():
+        return FileResponse(candidate)
+
+    if not INDEX_HTML.is_file():
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Frontend build output is missing from the deployment.",
+                "expected": str(INDEX_HTML),
+                "dist_exists": DIST.exists(),
+                "hint": (
+                    "The build must run `cd frontend && npm install && npm run "
+                    "build`, and frontend/dist must be part of the function "
+                    "bundle (see includeFiles in vercel.json)."
+                ),
+            },
+        )
+    return FileResponse(INDEX_HTML, media_type="text/html")
+
+
+def _not_found_payload(path: str) -> dict:
+    return {
+        "detail": "Not Found",
+        "received_path": path,
+        "known_paths": sorted({getattr(r, "path", "") for r in app.routes})[:80],
+    }
+
+
 @app.exception_handler(404)
 async def _not_found(request, exc):
-    """404s that name the path the app actually received.
-
-    Vercel warns that internal rewrites in backend-framework projects route on
-    the *rewritten* destination. If that applies here the app would see
-    `/api/index` instead of the requested route and every call would 404 for a
-    non-obvious reason. Naming the arriving path makes that visible rather than
-    looking like a missing endpoint.
-    """
-    return JSONResponse(
-        status_code=404,
-        content={
-            "detail": "Not Found",
-            "received_path": request.url.path,
-            "hint": (
-                "If received_path is '/api/index' rather than the route "
-                "requested, the platform applied the vercel.json rewrite "
-                "before the app saw the URL; drop the /api/(.*) rewrite."
-            ),
-            "known_paths": sorted({getattr(r, "path", "") for r in app.routes})[:80],
-        },
-    )
+    """404s that name the path the app actually received."""
+    return JSONResponse(status_code=404, content=_not_found_payload(request.url.path))
 
 
 __all__ = ["app"]
