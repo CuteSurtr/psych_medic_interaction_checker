@@ -44,10 +44,36 @@ function useEndpoint<T>(path: string) {
   return [state, run] as const;
 }
 
+export interface PkCandidate {
+  id: number;
+  generic_name: string;
+  has_pk_parameters?: boolean;
+}
+
+/** First regimen entry that can actually drive the compartmental model.
+ *  Roughly half the formulary carries interaction and CYP data but no
+ *  clearance, volume or absorption rate, and picking blindly by position made
+ *  these panels fail on whichever drug happened to be added first. */
+function pickPkCandidate(candidates: PkCandidate[]): PkCandidate | null {
+  return candidates.find((c) => c.has_pk_parameters) ?? null;
+}
+
+function NoPkNotice({ candidates }: { candidates: PkCandidate[] }) {
+  return (
+    <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+      {candidates.length === 0
+        ? "Add a medication to run this analysis."
+        : "None of the medications in this regimen has the clearance, volume of distribution and absorption rate this analysis needs. Around half the formulary carries interaction and CYP450 data only; half-life alone cannot recover them. Try fluoxetine, bupropion, aripiprazole, lithium or clozapine."}
+    </p>
+  );
+}
+
 function Panel({
   title,
   tag,
   blurb,
+  subject,
+  notice,
   state,
   onRun,
   disabled,
@@ -56,6 +82,8 @@ function Panel({
   title: string;
   tag: string;
   blurb: string;
+  subject?: string | null;
+  notice?: React.ReactNode;
   state: Async<unknown>;
   onRun: () => void;
   disabled?: boolean;
@@ -72,6 +100,9 @@ function Panel({
             </span>
           </div>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">{blurb}</p>
+          {subject && (
+            <p className="mt-1 text-[11px] font-medium text-indigo-600">Analysing: {subject}</p>
+          )}
         </div>
         <button
           type="button"
@@ -82,6 +113,7 @@ function Panel({
           {state.loading ? "Running…" : "Compute"}
         </button>
       </div>
+      {notice && <div className="px-5 pb-4">{notice}</div>}
       {(state.error || state.data != null) && (
         <div className="border-t border-slate-100 px-5 py-4">
           {state.error && (
@@ -134,7 +166,8 @@ interface DesignData {
   grid_step_h: number;
 }
 
-export function OptimalDesignPanel({ medicationId }: { medicationId: number | null }) {
+export function OptimalDesignPanel({ candidates }: { candidates: PkCandidate[] }) {
+  const pick = pickPkCandidate(candidates);
   const [state, run] = useEndpoint<DesignData>("/api/advanced/optimal-design");
   const [nSamples, setNSamples] = useState(3);
   const d = state.data;
@@ -144,8 +177,10 @@ export function OptimalDesignPanel({ medicationId }: { medicationId: number | nu
       tag="Fisher Information"
       blurb="When should the levels actually be drawn? Maximises the determinant of the Fisher information matrix over sampling times, and scores routine trough-only monitoring against it."
       state={state}
-      disabled={medicationId == null}
-      onRun={() => run({ medication_id: medicationId, n_samples: nSamples })}
+      subject={pick?.generic_name}
+      notice={pick == null ? <NoPkNotice candidates={candidates} /> : null}
+      disabled={pick == null}
+      onRun={() => pick && run({ medication_id: pick.id, n_samples: nSamples })}
     >
       {d && (
         <div className="space-y-4">
@@ -211,7 +246,8 @@ interface SobolData {
 
 const METRICS = ["cmax", "auc", "trough", "tmax"] as const;
 
-export function SensitivityPanel({ medicationId }: { medicationId: number | null }) {
+export function SensitivityPanel({ candidates }: { candidates: PkCandidate[] }) {
+  const pick = pickPkCandidate(candidates);
   const [state, run] = useEndpoint<SobolData>("/api/advanced/sensitivity");
   const [metric, setMetric] = useState<string>("cmax");
   const d = state.data;
@@ -221,8 +257,10 @@ export function SensitivityPanel({ medicationId }: { medicationId: number | null
       tag="Sobol Indices"
       blurb="Which parameter's uncertainty drives the predicted exposure, and how much of that is carried through interactions rather than alone. Variance decomposition over the whole input distribution, not one-at-a-time."
       state={state}
-      disabled={medicationId == null}
-      onRun={() => run({ medication_id: medicationId, metric })}
+      subject={pick?.generic_name}
+      notice={pick == null ? <NoPkNotice candidates={candidates} /> : null}
+      disabled={pick == null}
+      onRun={() => pick && run({ medication_id: pick.id, metric })}
     >
       {d && (
         <div className="space-y-4">
@@ -403,7 +441,8 @@ const SCHEDULES: Record<string, number[]> = {
   "Single time x3 (24,24,24h)": [24, 24, 24],
 };
 
-export function IdentifiabilityPanel({ medicationId }: { medicationId: number | null }) {
+export function IdentifiabilityPanel({ candidates }: { candidates: PkCandidate[] }) {
+  const pick = pickPkCandidate(candidates);
   const [state, run] = useEndpoint<IdentData>("/api/advanced/identifiability");
   const [schedule, setSchedule] = useState<string>(Object.keys(SCHEDULES)[0]);
   const d = state.data;
@@ -413,8 +452,10 @@ export function IdentifiabilityPanel({ medicationId }: { medicationId: number | 
       tag="Rank + Profile Likelihood"
       blurb="Can these parameters be recovered from this sampling schedule at all? Structural failure comes from the rank and collinearity of the sensitivity matrix; practical failure from a likelihood profile that never closes."
       state={state}
-      disabled={medicationId == null}
-      onRun={() => run({ medication_id: medicationId, sampling_times_h: SCHEDULES[schedule] })}
+      subject={pick?.generic_name}
+      notice={pick == null ? <NoPkNotice candidates={candidates} /> : null}
+      disabled={pick == null}
+      onRun={() => pick && run({ medication_id: pick.id, sampling_times_h: SCHEDULES[schedule] })}
     >
       {d && (
         <div className="space-y-4">

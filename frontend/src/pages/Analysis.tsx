@@ -456,7 +456,14 @@ export default function Analysis() {
     ]);
   }, [regimen]);
 
-  const firstMedId = regimen.length > 0 ? regimen[0].id : null;
+  // The PK-model panels need clearance, volume and absorption rate, which
+  // only part of the formulary carries; they select a usable entry
+  // themselves rather than taking whichever drug was added first.
+  const pkCandidates = regimen.map((m) => ({
+    id: m.id,
+    generic_name: m.generic_name,
+    has_pk_parameters: m.has_pk_parameters,
+  }));
 
   const anyTriggered =
     graph.loading || graph.data !== null || graph.error !== null;
@@ -1116,9 +1123,9 @@ export default function Analysis() {
               Computed per medication, independently of the regimen-level analyses above.
             </p>
           </div>
-          <OptimalDesignPanel medicationId={firstMedId} />
-          <SensitivityPanel medicationId={firstMedId} />
-          <IdentifiabilityPanel medicationId={firstMedId} />
+          <OptimalDesignPanel candidates={pkCandidates} />
+          <SensitivityPanel candidates={pkCandidates} />
+          <IdentifiabilityPanel candidates={pkCandidates} />
           <TreatmentPolicyPanel />
         </div>
       </main>

@@ -6,6 +6,22 @@ from database.connection import get_db
 from models import CYP450Profile, Medication
 router = APIRouter(prefix='/api/medications', tags=['medications'])
 
+
+def _has_pk_parameters(m: Medication) -> bool:
+    """Whether the PK-model analyses can run for this medication.
+
+    Roughly half the formulary carries interaction and CYP data but no
+    clearance, volume or absorption rate. Those entries are complete for what
+    they are used for elsewhere; they simply cannot drive a compartmental
+    model. Surfacing the distinction lets the interface offer only what it can
+    actually compute, instead of failing after the user picks.
+    """
+    return all(
+        v is not None and float(v) > 0
+        for v in (m.clearance_l_per_h, m.volume_of_distribution_l, m.absorption_rate_constant)
+    )
+
+
 @router.get('/search')
 def search_medications(q: str=Query('', min_length=0), db: Session=Depends(get_db)) -> list[dict[str, Any]]:
     q = (q or '').strip()
@@ -17,15 +33,41 @@ def search_medications(q: str=Query('', min_length=0), db: Session=Depends(get_d
     # a substring match finds the brand either way.
     brand_match = func.coalesce(cast(Medication.brand_names, Text), '').ilike(like)
     rows = db.query(Medication).filter(or_(Medication.generic_name.ilike(like), brand_match)).order_by(Medication.generic_name).limit(25).all()
-    return [{'id': m.id, 'generic_name': m.generic_name, 'brand_names': m.brand_names or [], 'drug_class': m.drug_class, 'sub_class': m.sub_class} for m in rows]
+    return [{'id': m.id, 'generic_name': m.generic_name, 'brand_names': m.brand_names or [], 'drug_class': m.drug_class, 'sub_class': m.sub_class, 'has_pk_parameters': _has_pk_parameters(m)} for m in rows]
 
 @router.get('/classes')
 def list_classes(db: Session=Depends(get_db)) -> list[str]:
     rows = db.query(Medication.drug_class).distinct().order_by(Medication.drug_class).all()
     return [r[0] for r in rows if r[0]]
 
+@router.get('/pk-complete')
+def list_pk_complete(db: Session=Depends(get_db)) -> dict[str, Any]:
+    """Medications whose formulary entry can drive the compartmental model.
+
+    The design, sensitivity and identifiability analyses need clearance, volume
+    of distribution and an absorption rate constant. Around half the formulary
+    has interaction and CYP450 data but no PK parameters, and half-life alone is
+    not enough to recover them: t_half = ln2 * Vd / CL is one equation in two
+    unknowns, and ka additionally needs tmax. Rather than invent values, this
+    reports which medications actually support those analyses.
+    """
+    rows = db.query(Medication).order_by(Medication.generic_name).all()
+    complete = [m for m in rows if _has_pk_parameters(m)]
+    return {
+        'total': len(rows),
+        'pk_complete_count': len(complete),
+        'medications': [
+            {'id': m.id, 'generic_name': m.generic_name, 'drug_class': m.drug_class}
+            for m in complete
+        ],
+    }
+
+
+# Declared before the parameterised '/{med_id}' route below: FastAPI matches
+# in registration order, so a literal path has to come first or it is
+# captured as an id and rejected as a non-integer.
 def _med_to_dict(m: Medication, cyp: list[CYP450Profile]) -> dict[str, Any]:
-    return {'id': m.id, 'generic_name': m.generic_name, 'brand_names': m.brand_names or [], 'drug_class': m.drug_class, 'sub_class': m.sub_class, 'bioavailability': float(m.bioavailability) if m.bioavailability else None, 'volume_of_distribution_l': float(m.volume_of_distribution_l) if m.volume_of_distribution_l else None, 'clearance_l_per_h': float(m.clearance_l_per_h) if m.clearance_l_per_h else None, 'half_life_hours': float(m.half_life_hours) if m.half_life_hours is not None else None, 'absorption_rate_constant': float(m.absorption_rate_constant) if m.absorption_rate_constant else None, 'tmax_hours': float(m.tmax_hours) if m.tmax_hours else None, 'protein_binding_pct': float(m.protein_binding_pct) if m.protein_binding_pct else None, 'therapeutic_min_ng_ml': float(m.therapeutic_min_ng_ml) if m.therapeutic_min_ng_ml else None, 'therapeutic_max_ng_ml': float(m.therapeutic_max_ng_ml) if m.therapeutic_max_ng_ml else None, 'toxic_threshold_ng_ml': float(m.toxic_threshold_ng_ml) if m.toxic_threshold_ng_ml else None, 'has_active_metabolite': m.has_active_metabolite, 'metabolite_name': m.metabolite_name, 'metabolite_half_life_hours': float(m.metabolite_half_life_hours) if m.metabolite_half_life_hours else None, 'qtc_prolongation_risk': m.qtc_prolongation_risk, 'anticholinergic_potency': m.anticholinergic_potency, 'serotonergic_potency': m.serotonergic_potency, 'cns_depression_risk': m.cns_depression_risk, 'beers_criteria_flag': m.beers_criteria_flag, 'fda_pregnancy_category': m.fda_pregnancy_category, 'common_dose_range': m.common_dose_range, 'typical_start_dose_mg': float(m.typical_start_dose_mg) if m.typical_start_dose_mg else None, 'max_dose_mg': float(m.max_dose_mg) if m.max_dose_mg else None, 'dosing_frequency': m.dosing_frequency, 'notes': m.notes, 'cyp450': [{'enzyme': c.enzyme, 'relationship': c.role, 'potency': c.potency, 'fraction_metabolized': float(c.fraction_metabolized) if c.fraction_metabolized else None, 'ki_nm': float(c.ki_nm) if c.ki_nm else None} for c in cyp]}
+    return {'id': m.id, 'generic_name': m.generic_name, 'has_pk_parameters': _has_pk_parameters(m), 'brand_names': m.brand_names or [], 'drug_class': m.drug_class, 'sub_class': m.sub_class, 'bioavailability': float(m.bioavailability) if m.bioavailability else None, 'volume_of_distribution_l': float(m.volume_of_distribution_l) if m.volume_of_distribution_l else None, 'clearance_l_per_h': float(m.clearance_l_per_h) if m.clearance_l_per_h else None, 'half_life_hours': float(m.half_life_hours) if m.half_life_hours is not None else None, 'absorption_rate_constant': float(m.absorption_rate_constant) if m.absorption_rate_constant else None, 'tmax_hours': float(m.tmax_hours) if m.tmax_hours else None, 'protein_binding_pct': float(m.protein_binding_pct) if m.protein_binding_pct else None, 'therapeutic_min_ng_ml': float(m.therapeutic_min_ng_ml) if m.therapeutic_min_ng_ml else None, 'therapeutic_max_ng_ml': float(m.therapeutic_max_ng_ml) if m.therapeutic_max_ng_ml else None, 'toxic_threshold_ng_ml': float(m.toxic_threshold_ng_ml) if m.toxic_threshold_ng_ml else None, 'has_active_metabolite': m.has_active_metabolite, 'metabolite_name': m.metabolite_name, 'metabolite_half_life_hours': float(m.metabolite_half_life_hours) if m.metabolite_half_life_hours else None, 'qtc_prolongation_risk': m.qtc_prolongation_risk, 'anticholinergic_potency': m.anticholinergic_potency, 'serotonergic_potency': m.serotonergic_potency, 'cns_depression_risk': m.cns_depression_risk, 'beers_criteria_flag': m.beers_criteria_flag, 'fda_pregnancy_category': m.fda_pregnancy_category, 'common_dose_range': m.common_dose_range, 'typical_start_dose_mg': float(m.typical_start_dose_mg) if m.typical_start_dose_mg else None, 'max_dose_mg': float(m.max_dose_mg) if m.max_dose_mg else None, 'dosing_frequency': m.dosing_frequency, 'notes': m.notes, 'cyp450': [{'enzyme': c.enzyme, 'relationship': c.role, 'potency': c.potency, 'fraction_metabolized': float(c.fraction_metabolized) if c.fraction_metabolized else None, 'ki_nm': float(c.ki_nm) if c.ki_nm else None} for c in cyp]}
 
 @router.get('/{med_id}')
 def get_medication(med_id: int, db: Session=Depends(get_db)) -> dict[str, Any]:

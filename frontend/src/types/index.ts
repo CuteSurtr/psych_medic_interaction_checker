@@ -1,4 +1,7 @@
 export interface MedicationSearchHit {
+  /** Whether the entry carries CL, Vd and ka, which the PK-model
+   *  analyses require. Roughly half the formulary does not. */
+  has_pk_parameters?: boolean;
   id: number;
   generic_name: string;
   brand_names: string[];

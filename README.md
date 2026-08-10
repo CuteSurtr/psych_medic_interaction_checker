@@ -484,6 +484,8 @@ start.
 
 Each parameter is annotated with its source in the seed data files (`backend/database/seed_data.py`).
 
+**Coverage boundary.** 50 of the 115 medications carry full PK parameters ($CL$, $V_d$, $k_a$); the remaining 65 have interaction, CYP450 and half-life data only. Those entries are complete for the interaction and risk analyses, which is what they are used for, but cannot drive the compartmental model: $t_{1/2} = \ln 2 \cdot V_d / CL$ is one equation in two unknowns, and $k_a$ additionally needs $t_{max}$, so the missing parameters are not recoverable from what is present. Rather than invent values, `/api/medications/pk-complete` reports which medications support the PK-model analyses, the search response carries a `has_pk_parameters` flag, and the Design & Diagnostics panels select a usable medication themselves.
+
 ---
 
 ## Deploying to Vercel
@@ -611,7 +613,7 @@ pip install pytest numpy scipy
 pytest -v
 ```
 
-**288 tests** covering:
+**295 tests** covering:
 
 - **`test_enzyme_kinetics.py`** — Michaelis-Menten rate at $K_m$ (= $V_{max}/2$), competitive inhibition math, enzyme activity factors
 - **`test_risk_calculator.py`** — Mechanism-aware serotonin syndrome scoring (MAOI + SSRI = Critical), tiered QTc risk, anticholinergic burden, CNS depression
@@ -631,6 +633,7 @@ pytest -v
 | `GET` | `/api/medications/{id}` | Full medication profile + CYP450 |
 | `GET` | `/api/medications/{id}/pk-parameters` | PK parameters only |
 | `GET` | `/api/medications/classes` | Distinct drug classes |
+| `GET` | `/api/medications/pk-complete` | Medications whose entry can drive the compartmental model |
 | `POST` | `/api/interactions/check` | Pairwise interactions for IDs |
 | `GET` | `/api/cyp450/profile?medication_ids=1,2,3` | Enzyme buckets + conflict flags |
 | `POST` | `/api/risk-summary` | Composite risk scores |
