@@ -33,7 +33,8 @@
 15. [Receptor Occupancy](#xv-receptor-occupancy)
 16. [Hepatic Extraction](#xvi-hepatic-extraction)
 17. [Optimal Experimental Design](#xvii-optimal-experimental-design)
-18. [References](#references)
+18. [Global Sensitivity Analysis](#xviii-global-sensitivity-analysis)
+19. [References](#references)
 
 ---
 
@@ -807,6 +808,99 @@ The search is exhaustive over a discrete grid of candidate times. That is
 $\binom{|\text{grid}|}{n}$ determinant evaluations, so the grid is coarsened
 automatically when the count would exceed the budget, and the step actually
 used is reported rather than hidden.
+
+---
+
+## XVIII. Global Sensitivity Analysis
+
+Monte Carlo says how wide the prediction is. This section says *which*
+parameter's uncertainty is responsible, which is the question that decides
+what is worth measuring.
+
+### 18.1 Why not one-at-a-time
+
+The informal approach, perturbing one parameter while holding the rest at their
+nominal values, probes a single point in parameter space and is blind to
+interactions by construction. If a parameter only matters when another is
+extreme, one-at-a-time reports it as unimportant.
+
+### 18.2 Variance decomposition
+
+For a square-integrable model $Y = f(X_1, \ldots, X_k)$ with independent
+inputs, the ANOVA-HDMR decomposition is unique:
+
+$$
+\operatorname{Var}(Y) = \sum_i V_i + \sum_{i<j} V_{ij} + \cdots + V_{1\ldots k}
+$$
+
+with $V_i = \operatorname{Var}_{X_i}\!\left(\mathbb{E}[Y \mid X_i]\right)$.
+Normalising gives the **first-order index** and the **total-effect index**:
+
+$$
+S_i = \frac{V_i}{\operatorname{Var}(Y)}, \qquad
+S_{T_i} = \frac{\mathbb{E}\!\left[\operatorname{Var}(Y \mid X_{\sim i})\right]}{\operatorname{Var}(Y)}
+$$
+
+$S_i$ is the variance removed by learning $X_i$ alone. $S_{T_i}$ is the
+variance that remains when everything *except* $X_i$ is known. The gap
+$S_{T_i} - S_i$ is exactly the share $X_i$ carries through interactions.
+
+Two identities follow, and both are used as convergence checks rather than
+assumed:
+
+$$
+S_{T_i} \geq S_i, \qquad \sum_i S_i \leq 1
+$$
+
+with equality in the second precisely when the model is additive.
+
+### 18.3 Estimators
+
+Saltelli's cross-sampling draws two independent matrices $A$ and $B$ and forms
+$AB_i$, which is $A$ with column $i$ replaced by $B$'s, at a cost of
+$n(k+2)$ model evaluations. The estimators are
+
+$$
+\hat{S}_i = \frac{\frac{1}{n}\sum_m f(B)_m\left(f(AB_i)_m - f(A)_m\right)}{\widehat{\operatorname{Var}}(Y)}, \qquad
+\hat{S}_{T_i} = \frac{\frac{1}{2n}\sum_m \left(f(A)_m - f(AB_i)_m\right)^2}{\widehat{\operatorname{Var}}(Y)}
+$$
+
+Jansen's form is used for the total index because the alternative
+$1 - \mathbb{E}[f(B) f(AB_i)]/\operatorname{Var}(Y)$ is a difference of two
+similar quantities and loses precision exactly where the index is small, which
+is where the interesting conclusion "this parameter does not matter" lives.
+
+Sampling is uniform in $\log$ space over a 95% lognormal fold-range derived
+from each parameter's coefficient of variation,
+$f = \exp(1.96\sqrt{\ln(1 + CV^2)})$. That treats "clearance doubles" and
+"clearance halves" as perturbations of equal size, which is how
+inter-individual variability actually behaves.
+
+### 18.4 Convergence is checked, not assumed
+
+Under-sampling does not announce itself; the estimator simply returns a
+confident wrong number. At $n = 512$ the fluoxetine trough case reported
+first-order indices summing to **1.48**, which is impossible. The implementation
+therefore verifies both identities above against a tolerance, reports the widest
+bootstrap interval, and marks the result unconverged rather than presenting it.
+At $n = 32768$ the same case settles to $S_{V_d} = 0.84$, $S_{CL} = 0.21$,
+summing to $1.05$: essentially additive, as it should be.
+
+### 18.5 What it says about this model
+
+Validated against the Ishigami function, whose indices are analytic and which
+is the standard benchmark precisely because $x_3$ has **zero** main effect but a
+large interaction effect, and against $AUC_{0-\infty} = F \cdot D / CL$, where
+clearance must take all the variance.
+
+For the seeded psychiatric drugs over a 24-hour window, volume of distribution
+dominates $C_{\max}$, AUC and trough, while $k_a$ dominates $t_{\max}$ and
+almost nothing else. The practical reading is that for a drug whose half-life
+far exceeds the dosing interval, a measured level is mostly telling you about
+$V_d$; clearance only becomes identifiable once observation extends over a
+meaningful fraction of the elimination phase. That is the same conclusion
+section XVII reaches from the information matrix, arrived at from the opposite
+direction.
 
 ---
 

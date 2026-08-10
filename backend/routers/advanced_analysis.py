@@ -80,6 +80,20 @@ class OptimalDesignRequest(BaseModel):
     sigma_prop: float = 0.2
     reference_times_h: list[float] | None = None
 
+class SensitivityRequest(BaseModel):
+    """Which parameter's uncertainty drives the predicted exposure."""
+    medication_id: int | None = None
+    dose_mg: float = 20.0
+    cl_l_per_h: float | None = None
+    vd_l: float | None = None
+    ka_per_h: float | None = None
+    cv_cl_pct: float | None = None
+    cv_vd_pct: float | None = None
+    cv_ka_pct: float = 40.0
+    metric: str = 'cmax'
+    horizon_h: float = 24.0
+    n_base: int = 2048
+
 class BayesianObservation(BaseModel):
     time_h: float
     concentration_ng_ml: float
@@ -480,4 +494,103 @@ def run_optimal_design(req: OptimalDesignRequest, db: Session = Depends(get_db))
         'correlation_matrix': res.correlation_matrix,
         'condition_number': res.condition_number,
         'grid_step_h': res.grid_step_h,
+    }
+
+
+_SENSITIVITY_METRICS = ('cmax', 'auc', 'trough', 'tmax')
+
+
+@router.post('/sensitivity')
+def run_sensitivity(req: SensitivityRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Sobol global sensitivity of exposure to PK parameter uncertainty.
+
+    Monte Carlo says how wide the prediction is; this says which parameter is
+    responsible, and how much of that responsibility is carried through
+    interactions rather than alone.
+    """
+    import numpy as np
+
+    from models import Medication
+    from services.optimal_design import concentration
+    from services.sensitivity_analysis import sobol_indices
+
+    metric = req.metric.lower()
+    if metric not in _SENSITIVITY_METRICS:
+        raise HTTPException(400, f'metric must be one of {_SENSITIVITY_METRICS}')
+
+    cl, vd, ka = req.cl_l_per_h, req.vd_l, req.ka_per_h
+    cv_cl, cv_vd, name = req.cv_cl_pct, req.cv_vd_pct, None
+    if req.medication_id is not None:
+        med = db.query(Medication).filter(Medication.id == req.medication_id).first()
+        if not med:
+            raise HTTPException(404, f'Medication {req.medication_id} not found')
+        name = med.generic_name
+        cl = cl if cl is not None else float(med.clearance_l_per_h or 0) or None
+        vd = vd if vd is not None else float(med.volume_of_distribution_l or 0) or None
+        ka = ka if ka is not None else float(med.absorption_rate_constant or 0) or None
+        cv_cl = cv_cl if cv_cl is not None else float(med.cl_cv_pct or 0) or None
+        cv_vd = cv_vd if cv_vd is not None else float(med.vd_cv_pct or 0) or None
+
+    missing = [n for n, v in (('cl_l_per_h', cl), ('vd_l', vd), ('ka_per_h', ka)) if not v or v <= 0]
+    if missing:
+        raise HTTPException(400, f'missing positive PK parameters {missing}')
+
+    cv_cl = cv_cl or 35.0
+    cv_vd = cv_vd or 25.0
+
+    def fold(cv_pct: float) -> float:
+        """95% fold-range of a lognormal with the given coefficient of variation."""
+        sigma = float(np.sqrt(np.log(1.0 + (cv_pct / 100.0) ** 2)))
+        return float(np.exp(1.96 * sigma))
+
+    point = {'CL': cl, 'Vd': vd, 'ka': ka}
+    cvs = {'CL': cv_cl, 'Vd': cv_vd, 'ka': req.cv_ka_pct}
+    names = ['CL', 'Vd', 'ka']
+    bounds = [(point[n] / fold(cvs[n]), point[n] * fold(cvs[n])) for n in names]
+
+    t_grid = np.linspace(0.0, req.horizon_h, 241)
+
+    def model(X: np.ndarray) -> np.ndarray:
+        # Evaluated for every sampled parameter set at once. Sobol needs
+        # n_base*(k+2) evaluations, so a Python loop here is the difference
+        # between a fast request and a slow one.
+        cl_s, vd_s, ka_s = X[:, 0:1], X[:, 1:2], X[:, 2:3]
+        ke = cl_s / vd_s
+        gap = ka_s - ke
+        gap = np.where(np.abs(gap) < 1e-9, 1e-9, gap)
+        tt = t_grid[None, :]
+        c = (req.dose_mg * ka_s) / (vd_s * gap) * (np.exp(-ke * tt) - np.exp(-ka_s * tt))
+        if metric == 'cmax':
+            return c.max(axis=1)
+        if metric == 'auc':
+            return np.trapezoid(c, t_grid, axis=1)
+        if metric == 'trough':
+            return c[:, -1]
+        return t_grid[np.argmax(c, axis=1)]
+
+    n_base = int(np.clip(req.n_base, 128, 16384))
+    res = sobol_indices(model, names, bounds, n_base=n_base, log_scale=True)
+
+    ranked = sorted(names, key=lambda n: res.total_order[n], reverse=True)
+    return {
+        'drug_name': name,
+        'metric': metric,
+        'pk_parameters': {'cl_l_per_h': cl, 'vd_l': vd, 'ka_per_h': ka, 'dose_mg': req.dose_mg},
+        'coefficients_of_variation_pct': cvs,
+        'sampled_bounds': {n: list(b) for n, b in zip(names, bounds)},
+        'parameter_names': res.parameter_names,
+        'first_order': res.first_order,
+        'total_order': res.total_order,
+        'interaction': res.interaction,
+        'first_order_ci95': {k: list(v) for k, v in res.first_order_ci95.items()},
+        'total_order_ci95': {k: list(v) for k, v in res.total_order_ci95.items()},
+        'output_mean': res.output_mean,
+        'output_variance': res.output_variance,
+        'sum_first_order': res.sum_first_order,
+        'dominant_parameter': ranked[0],
+        'ranking': ranked,
+        'n_base_samples': res.n_base_samples,
+        'n_model_evaluations': res.n_model_evaluations,
+        'converged': res.converged,
+        'warnings': res.warnings,
     }
