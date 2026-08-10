@@ -75,6 +75,27 @@ def _status() -> dict:
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 INDEX_HTML = DIST / "index.html"
 
+
+@app.middleware("http")
+async def _cache_headers(request, call_next):
+    """Never cache the HTML shell; cache hashed assets forever.
+
+    Vite emits a new content hash for the bundle on every build, and
+    index.html is the only thing pointing at it. If a browser keeps a cached
+    index.html across a deploy it asks for the previous hash, which no longer
+    exists, the script 404s, and the page renders white with no error anyone
+    can see. Marking the shell no-store makes a deploy take effect on the next
+    request instead of stranding returning visitors.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 if (DIST / "assets").is_dir():
     # Vite emits content-hashed filenames, so these are safe to cache forever.
     app.mount(
