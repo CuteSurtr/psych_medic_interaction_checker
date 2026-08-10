@@ -3,6 +3,12 @@ import type { MedicationSearchHit, RegimenItem } from "../types";
 import { apiUrl } from "../utils/api";
 import AppHeader from "../components/AppHeader";
 import ErrorBoundary from "../components/ErrorBoundary";
+import {
+  IdentifiabilityPanel,
+  OptimalDesignPanel,
+  SensitivityPanel,
+  TreatmentPolicyPanel,
+} from "../components/AdvancedMathPanels";
 import MedicationSearch from "../components/MedicationSearch";
 import RegimenList from "../components/RegimenList";
 import DisclaimerFooter from "../components/DisclaimerFooter";
@@ -449,6 +455,8 @@ export default function Analysis() {
       }),
     ]);
   }, [regimen]);
+
+  const firstMedId = regimen.length > 0 ? regimen[0].id : null;
 
   const anyTriggered =
     graph.loading || graph.data !== null || graph.error !== null;
@@ -1097,6 +1105,22 @@ export default function Analysis() {
             })()}
           </Section>
         )}
+
+        {/* Design and diagnostics: these ask whether an estimate is worth
+            trusting, rather than producing another estimate. They run on the
+            first medication in the regimen, independently of Run Analysis. */}
+        <div className="space-y-4 pt-2">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">Design &amp; Diagnostics</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Computed per medication, independently of the regimen-level analyses above.
+            </p>
+          </div>
+          <OptimalDesignPanel medicationId={firstMedId} />
+          <SensitivityPanel medicationId={firstMedId} />
+          <IdentifiabilityPanel medicationId={firstMedId} />
+          <TreatmentPolicyPanel />
+        </div>
       </main>
 
       <DisclaimerFooter />

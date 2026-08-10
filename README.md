@@ -611,12 +611,13 @@ pip install pytest numpy scipy
 pytest -v
 ```
 
-**200 tests** covering:
+**288 tests** covering:
 
 - **`test_enzyme_kinetics.py`** — Michaelis-Menten rate at $K_m$ (= $V_{max}/2$), competitive inhibition math, enzyme activity factors
 - **`test_risk_calculator.py`** — Mechanism-aware serotonin syndrome scoring (MAOI + SSRI = Critical), tiered QTc risk, anticholinergic burden, CNS depression
 - **`test_pk_simulator.py`** — Dose scheduler event generation, steady-state convergence, **CYP2D6 inhibition effect** (fluoxetine increases aripiprazole AUC ≥1.3×, matching FDA label), **norfluoxetine persistence** after fluoxetine discontinuation, **smoking cessation** effect on clozapine levels (≥1.2× increase via dynamic CYP1A2 enzyme pool), **enzyme pool dynamics** (unit tests for `enzyme_pool_derivative`, integration tests for MBI-mediated enzyme depletion and post-discontinuation recovery with $t_{1/2,deg} \approx 51$ h for CYP2D6)
 - **`test_graph_analysis.py`** — Spectral graph theory ($\lambda_1 = 0$, $\lambda_2 > 0$ for connected graphs, $\rho(K_n) = w(n-1)$), chromatic number ($\chi(K_4) = 4$), independence polynomial ($I(K_n, x) = 1 + nx$ for conflict graphs), Fiedler vector partition for disconnected clusters, **bipartite conflict detection** (substrate × inhibitor counting), **König minimum cover**, **max-flow/min-cut** bottleneck identification, **three-drug interaction detection** (lithium + NSAID + ACE inhibitor triple whammy), **Ramsey $R(3,3)=6$** verification on 6-drug regimens
+- **`test_optimal_design.py`**, **`test_sensitivity_analysis.py`**, **`test_treatment_mdp.py`**, **`test_identifiability.py`** — the design and diagnostics layer, validated against cases with known answers rather than by inspection: Sobol indices against the analytic Ishigami decomposition and against $AUC_{0-\infty} = F\!\cdot\!D/CL$; Fisher information for additivity, singularity when under-sampled and dose-invariance under proportional error; the MDP value function against the Bellman optimality equation with policy iteration and value iteration cross-checked; identifiability against schedules whose rank is known by construction
 - **`test_stateless_api.py`** — the database-free deployment path: schema builds on SQLite, reference data seeds itself, brand-name search works without PostgreSQL array functions, the one-shot `POST /api/simulation/run` needs no prior request, analysis endpoints accept an inline simulation, and the stateless and persisted paths produce identical concentration curves
 - **`test_advanced_math.py`** (40 tests) — **Monte Carlo** (CI ordering, toxicity probability, parameter perturbation), **optimal control** (taper schedules, titration, dose-level constraints, risk timelines), **SDE simulation** (Milstein vs. Euler-Maruyama, non-negativity, stochastic path variability, $\sigma=0$ determinism), **entropy analysis** (CDI near 0 for single-enzyme concentration, CDI near 1 for uniform distribution, KL divergence), **Markov chain** (stochastic matrix validation, stationary distribution, treatment effect on Remission probability, first passage times), **TDA** (persistent homology, $\beta_0$ component counting, $\beta_1$ loop detection, distance ordering), **game theory** (ideal vs. effective clearances, social cost, Price of Anarchy ≥ 1, no-competition baseline)
 
@@ -643,6 +644,12 @@ pytest -v
 | `GET` | `/api/analysis/metabolic-flow?medication_ids=` | Max-flow/min-cut bottleneck identification |
 | `GET` | `/api/analysis/combinatorics?medication_ids=` | Polypharmacy combinatorics + three-drug interactions |
 | `POST` | `/api/advanced/optimizer/taper` | Optimal taper/titration schedule via dynamic programming |
+| `POST` | `/api/advanced/monte-carlo` | Population variability envelope with therapeutic-window probabilities |
+| `POST` | `/api/advanced/optimal-design` | D-optimal TDM sampling times (Fisher information) |
+| `POST` | `/api/advanced/sensitivity` | Sobol first-order and total-effect indices |
+| `POST` | `/api/advanced/treatment-policy` | Optimal state-dependent policy (MDP, policy iteration) |
+| `POST` | `/api/advanced/identifiability` | Sensitivity rank, collinearity index, profile likelihood |
+| `GET`  | `/api/__status` | Deployment health check (seeding, Python version, route count) |
 | `POST` | `/api/advanced/simulation/stochastic` | SDE simulation (Milstein/Euler-Maruyama) |
 | `GET` | `/api/advanced/entropy?medication_ids=` | CYP Diversification Index (Shannon entropy) |
 | `POST` | `/api/advanced/markov` | Markov chain patient state transition model |
