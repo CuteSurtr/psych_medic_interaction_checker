@@ -1,0 +1,42 @@
+from sqlalchemy import Boolean, Column, Integer, Numeric, String, Text
+from sqlalchemy.orm import relationship as sa_relationship
+from database.connection import Base
+from models.types import StringArray
+
+class Medication(Base):
+    __tablename__ = 'medications'
+    id = Column(Integer, primary_key=True, index=True)
+    generic_name = Column(String(255), nullable=False, unique=True)
+    brand_names = Column(StringArray)
+    drug_class = Column(String(100), nullable=False)
+    sub_class = Column(String(100))
+    bioavailability = Column(Numeric(6, 4))
+    volume_of_distribution_l = Column(Numeric(10, 2))
+    clearance_l_per_h = Column(Numeric(10, 3))
+    half_life_hours = Column(Numeric(10, 2))
+    absorption_rate_constant = Column(Numeric(8, 4))
+    tmax_hours = Column(Numeric(8, 2))
+    protein_binding_pct = Column(Numeric(5, 2))
+    cl_cv_pct = Column(Numeric(5, 1), default=30)
+    vd_cv_pct = Column(Numeric(5, 1), default=25)
+    therapeutic_min_ng_ml = Column(Numeric(10, 2))
+    therapeutic_max_ng_ml = Column(Numeric(10, 2))
+    toxic_threshold_ng_ml = Column(Numeric(10, 2))
+    has_active_metabolite = Column(Boolean, default=False)
+    metabolite_name = Column(String(255))
+    metabolite_half_life_hours = Column(Numeric(10, 2))
+    metabolite_formation_fraction = Column(Numeric(6, 4))
+    qtc_prolongation_risk = Column(Boolean, default=False)
+    anticholinergic_potency = Column(Integer, default=0)
+    serotonergic_potency = Column(Integer, default=0)
+    cns_depression_risk = Column(Integer, default=0)
+    beers_criteria_flag = Column(Boolean, default=False)
+    fda_pregnancy_category = Column(String(5))
+    common_dose_range = Column(String(100))
+    typical_start_dose_mg = Column(Numeric(10, 2))
+    max_dose_mg = Column(Numeric(10, 2))
+    dosing_frequency = Column(String(50))
+    notes = Column(Text)
+    cyp450_profiles = sa_relationship('CYP450Profile', back_populates='medication', cascade='all, delete-orphan')
+    interactions_a = sa_relationship('Interaction', foreign_keys='Interaction.drug_a_id', back_populates='drug_a')
+    interactions_b = sa_relationship('Interaction', foreign_keys='Interaction.drug_b_id', back_populates='drug_b')

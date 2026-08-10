@@ -1,0 +1,11 @@
+# Keep the serverless function bundle small: none of this is needed at runtime.
+backend/tests/
+backend/Dockerfile
+backend/requirements.txt
+frontend/Dockerfile
+frontend/nginx.conf
+frontend/node_modules/
+docker-compose.yml
+literature/
+**/__pycache__/
+*.pyc
