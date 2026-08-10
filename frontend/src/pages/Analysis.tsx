@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import type { MedicationSearchHit, RegimenItem } from "../types";
 import { apiUrl } from "../utils/api";
 import AppHeader from "../components/AppHeader";
+import ErrorBoundary from "../components/ErrorBoundary";
 import MedicationSearch from "../components/MedicationSearch";
 import RegimenList from "../components/RegimenList";
 import DisclaimerFooter from "../components/DisclaimerFooter";
@@ -47,7 +48,7 @@ interface CombinatoricsData {
   pairwise_checks: number;
   triple_checks: number;
   detected_three_drug_interactions: ThreeDrugIxRow[];
-  conflict_probability_pct?: number;
+  conflict_probability_pct: number | null;
 }
 
 interface EntropyData {
@@ -81,7 +82,7 @@ interface GameTheoryApiResponse {
 interface MarkovData {
   stationary_distribution: Record<string, number>;
   first_passage_times: Record<string, Record<string, number>>;
-  trajectory_summary: Record<string, number>;
+  trajectory_summary: Record<string, number> | null;
 }
 
 /* ─── Async wrapper ───────────────────────────────────────────── */
@@ -216,7 +217,12 @@ function Section({
               Click &ldquo;Run Analysis&rdquo; to populate this section.
             </p>
           )}
-          {!loading && !error && hasData && children}
+          {/* Each panel renders an independent API response. Containing a
+              render failure here keeps one bad value from unmounting the
+              whole page. */}
+          {!loading && !error && hasData && (
+            <ErrorBoundary label={title}>{children}</ErrorBoundary>
+          )}
         </div>
       )}
     </div>
@@ -688,7 +694,7 @@ export default function Analysis() {
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                     <Stat label="Pairwise Checks" value={d.pairwise_checks} />
                     <Stat label="Triple Checks" value={d.triple_checks} />
-                    {d.conflict_probability_pct !== undefined && (
+                    {d.conflict_probability_pct != null && (
                       <Stat
                         label="Conflict Probability"
                         value={`${d.conflict_probability_pct.toFixed(1)}%`}
@@ -1008,7 +1014,7 @@ export default function Analysis() {
               const d = markov.data;
               const statEntries = Object.entries(d.stationary_distribution);
               const maxStat = Math.max(...statEntries.map(([, v]) => v), 0.01);
-              const trajEntries = Object.entries(d.trajectory_summary);
+              const trajEntries = Object.entries(d.trajectory_summary ?? {});
               const maxTraj = Math.max(...trajEntries.map(([, v]) => v), 0.01);
               const fptStates = Object.keys(d.first_passage_times);
 

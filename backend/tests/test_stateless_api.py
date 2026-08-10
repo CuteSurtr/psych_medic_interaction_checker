@@ -173,3 +173,44 @@ def test_persisted_and_stateless_paths_agree(client, med_ids):
     assert stateless["time_hours"] == persisted["time_hours"]
     for drug, series in stateless["concentrations"].items():
         assert series == pytest.approx(persisted["concentrations"][drug])
+
+
+# ------------------------------------------- nullable fields in the contract
+# These endpoints legitimately return null for some regimens. The Analysis page
+# crashed the whole app once by guarding one of them with `!== undefined`,
+# which lets null through to `.toFixed`. Pin the contract so any change here is
+# a deliberate one, and the frontend types stay honest.
+
+
+def test_combinatorics_conflict_probability_may_be_null(client, med_ids):
+    body = client.get(
+        f"/api/analysis/combinatorics?medication_ids={','.join(map(str, med_ids))}"
+    ).json()
+    assert "conflict_probability_pct" in body
+    value = body["conflict_probability_pct"]
+    assert value is None or isinstance(value, (int, float))
+
+
+def test_graph_metrics_bridge_drug_may_be_null(client, med_ids):
+    body = client.get(
+        f"/api/analysis/graph-metrics?medication_ids={','.join(map(str, med_ids))}"
+    ).json()
+    assert "bridge_drug" in body
+    assert body["bridge_drug"] is None or isinstance(body["bridge_drug"], str)
+
+
+def test_metabolic_flow_bottleneck_enzyme_may_be_null(client, med_ids):
+    body = client.get(
+        f"/api/analysis/metabolic-flow?medication_ids={','.join(map(str, med_ids))}"
+    ).json()
+    assert "bottleneck_enzyme" in body
+    assert body["bottleneck_enzyme"] is None or isinstance(body["bottleneck_enzyme"], str)
+
+
+def test_markov_trajectory_summary_may_be_null(client):
+    body = client.post(
+        "/api/advanced/markov",
+        json={"drug_classes": ["SSRI"], "initial_state": "Partial Response", "n_weeks": 12},
+    ).json()
+    assert "trajectory_summary" in body
+    assert body["trajectory_summary"] is None or isinstance(body["trajectory_summary"], dict)
