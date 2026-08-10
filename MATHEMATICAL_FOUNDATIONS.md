@@ -29,7 +29,10 @@
 11. [Markov Chain Patient State Model](#xi-markov-chain-patient-state-model)
 12. [Topological Data Analysis](#xii-topological-data-analysis)
 13. [Algorithmic Game Theory](#xiii-algorithmic-game-theory)
-14. [References](#references)
+14. [Tissue Distribution PDE](#xiv-tissue-distribution-pde)
+15. [Receptor Occupancy](#xv-receptor-occupancy)
+16. [Hepatic Extraction](#xvi-hepatic-extraction)
+17. [References](#references)
 
 ---
 
@@ -515,6 +518,207 @@ $$d_i^* = \arg\min_{d' \in \mathcal{A}_i} SC(\mathbf{C} \text{ with } d_i \to d'
 
 ---
 
+
+---
+
+## XIV. Tissue Distribution PDE
+
+Plasma concentration is not what acts on the target. A drug must cross the
+blood-brain barrier and diffuse through tissue, and that transport is what
+separates a fast-equilibrating drug from one that lags plasma by hours.
+
+### 14.1 Governing equation
+
+Tissue is modelled as a one-dimensional slab of depth $L$, with $x = 0$ at the
+capillary surface and $x = L$ deep tissue. Free drug concentration
+$c(x, t)$ obeys a reaction-diffusion equation:
+
+$$
+\frac{\partial c}{\partial t} = D \frac{\partial^2 c}{\partial x^2} - k_e c
+$$
+
+$D$ is the effective tissue diffusivity (default $7.2 \times 10^{-3}$
+cm$^2$/h for brain parenchyma) and $k_e$ is first-order local elimination.
+
+### 14.2 Boundary conditions
+
+The surface is a **flux (Robin) boundary**, not a fixed concentration. Only
+unbound drug crosses, and the flux is proportional to the gradient across the
+barrier with effective permeability $P_{\text{eff}}$:
+
+$$
+\left. -D \frac{\partial c}{\partial x} \right|_{x=0} = P_{\text{eff}}\left(f_u\, C_{\text{plasma}}(t) - c(0, t)\right)
+$$
+
+Deep tissue is a **no-flux (Neumann) boundary**, representing a symmetry plane
+between capillaries:
+
+$$
+\left. \frac{\partial c}{\partial x} \right|_{x=L} = 0
+$$
+
+The $f_u$ factor matters: for a drug that is 99% protein-bound
+(aripiprazole, $f_u = 0.01$) the driving concentration is a hundredth of the
+measured plasma level, which is why total plasma concentration is a poor
+predictor of central effect across drugs with different binding.
+
+### 14.3 Discretisation
+
+The slab is discretised on $n$ uniform nodes with spacing
+$\Delta x = L/(n-1)$, giving the standard second-order interior stencil:
+
+$$
+\frac{dc_i}{dt} = \frac{D}{\Delta x^2}(c_{i+1} - 2c_i + c_{i-1}) - k_e c_i
+$$
+
+Both boundaries use the **ghost-node** construction so they retain second-order
+accuracy rather than degrading to first order. Reflecting $c_{-1}$ through the
+Robin condition and eliminating it gives
+
+$$
+\frac{dc_0}{dt} = \frac{2D}{\Delta x^2}(c_1 - c_0) + \frac{2P_{\text{eff}}}{\Delta x}\left(f_u C_{\text{plasma}}(t) - c_0\right) - k_e c_0
+$$
+
+and the no-flux condition at $x = L$ gives
+
+$$
+\frac{dc_{n-1}}{dt} = \frac{2D}{\Delta x^2}(c_{n-2} - c_{n-1}) - k_e c_{n-1}
+$$
+
+The factor of 2 in both is the signature of the ghost-node elimination; using
+a one-sided difference instead would silently lose an order of accuracy at
+exactly the point where the interesting physics lives.
+
+The resulting system is a stiff linear ODE in $\mathbb{R}^n$ driven by the
+plasma trajectory, integrated with an implicit solver. Plasma concentration
+enters as a time-dependent forcing term interpolated from the PK simulation,
+so the PDE is one-way coupled to the compartmental model: tissue uptake does
+not deplete plasma, which is a good approximation when tissue is a small
+fraction of the distribution volume.
+
+### 14.4 Reported quantities
+
+Surface, mean and deep concentrations are tracked separately, along with the
+**time to 80% of the final deep concentration**. That statistic is the
+practical output: it estimates how long after a dose change the target site
+actually reflects the new regimen, which is the lag a prescriber is implicitly
+guessing at when they decide how long to wait before judging a titration.
+
+---
+
+## XV. Receptor Occupancy
+
+Concentration is an intermediate; occupancy is the quantity with a known
+relationship to clinical effect.
+
+### 15.1 Unit conversion
+
+Binding constants are published in nM while concentrations are measured in
+ng/mL, so a molar-mass conversion is required before any comparison:
+
+$$
+C[\text{nM}] = \frac{C[\text{ng/mL}] \times 1000}{MW\,[\text{g/mol}]}
+$$
+
+### 15.2 Fractional occupancy
+
+Equilibrium binding to a single site follows the Langmuir isotherm, which is
+the Hill equation with $n_H = 1$:
+
+$$
+\theta = \frac{C_u}{C_u + K_d}
+$$
+
+with $C_u = f_u C$ the unbound concentration. Occupancy is therefore
+**saturating**: going from $K_d$ to $2K_d$ moves occupancy from 50% to 67%,
+and from $4K_d$ to $8K_d$ moves it from 80% to 89%. This is the pharmacological
+reason dose-response flattens, and why doubling a dose in the upper range buys
+little additional effect while side-effect occupancy keeps climbing.
+
+For graded responses the sigmoid $E_{\max}$ form is used:
+
+$$
+E = E_0 + \frac{E_{\max} C^\gamma}{EC_{50}^\gamma + C^\gamma}
+$$
+
+### 15.3 Clinical thresholds
+
+The thresholds the interface annotates come from PET occupancy studies
+(Kapur et al. 2000, first-episode schizophrenia, $[^{11}\text{C}]$raclopride):
+
+| D2 occupancy | Consequence |
+|---|---|
+| $\geq 65\%$ | clinical response becomes likely |
+| $\geq 72\%$ | hyperprolactinaemia risk rises |
+| $\geq 78\%$ | extrapyramidal side effects rise |
+
+The narrowness of that window, 65% to 78%, is the entire therapeutic problem
+for typical antipsychotics: the separation between response and toxicity is
+13 percentage points of occupancy, which given the saturating isotherm above
+corresponds to a fairly small concentration band. Plotting an occupancy
+trajectory against these lines shows directly how much of a dosing interval is
+spent inside the window rather than above or below it.
+
+---
+
+## XVI. Hepatic Extraction
+
+Clearance is not a free parameter. It is bounded by how fast blood can deliver
+drug to the liver, and that bound determines whether an interaction matters.
+
+### 16.1 Intrinsic clearance
+
+Each metabolic pathway contributes intrinsic clearance from its
+Michaelis-Menten parameters, in the linear (sub-saturating) regime:
+
+$$
+CL_{\text{int}} = \sum_j \frac{V_{\max,j}}{K_{m,j}}
+$$
+
+Competitive inhibition scales each pathway independently by its own inhibitor
+burden:
+
+$$
+CL_{\text{int}}^{\text{inh}} = \sum_j \frac{V_{\max,j}/K_{m,j}}{1 + \sum_i [I_i]_u / K_{i,ij}}
+$$
+
+Summing $[I]/K_i$ across inhibitors within a pathway is what makes multiple
+weak inhibitors on the same enzyme add up, which a per-drug severity label
+cannot express.
+
+### 16.2 The well-stirred model
+
+Hepatic clearance follows Pang and Rowland (1977):
+
+$$
+CL_H = \frac{Q_H \cdot f_u \cdot CL_{\text{int}}}{Q_H + f_u \cdot CL_{\text{int}}}
+$$
+
+with $Q_H \approx 81$ L/h. The extraction ratio and first-pass survival are
+
+$$
+E_H = \frac{CL_H}{Q_H}, \qquad F_H = 1 - E_H
+$$
+
+### 16.3 Why the limiting behaviour is the whole point
+
+The formula is a harmonic combination, so it has two regimes:
+
+**Low extraction** ($f_u CL_{\text{int}} \ll Q_H$): $CL_H \approx f_u CL_{\text{int}}$.
+Clearance tracks enzyme activity directly, so inhibiting the enzyme changes
+exposure roughly proportionally. Most psychiatric drugs live here, which is
+why CYP inhibition is clinically consequential for them.
+
+**High extraction** ($f_u CL_{\text{int}} \gg Q_H$): $CL_H \approx Q_H$.
+Clearance is perfusion-limited and nearly insensitive to enzyme activity, so
+the same inhibitor produces little change in systemic clearance. The
+interaction instead appears as increased **oral bioavailability**, because
+$F_H = 1 - E_H$ rises when $CL_{\text{int}}$ falls.
+
+The same inhibitor therefore acts through completely different mechanisms
+depending on where the substrate sits on this curve, and the extraction ratio
+is what tells you which. This is why the panel reports $E_H$ and its
+classification alongside the clearance numbers rather than the clearance alone.
 
 ---
 

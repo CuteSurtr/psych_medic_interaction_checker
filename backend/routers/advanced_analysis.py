@@ -60,6 +60,12 @@ class HepaticExtractionRequest(BaseModel):
     simulation: InlineSimulation | None = None
     q_hepatic_l_per_h: float = 81.0
 
+class MonteCarloRequest(BaseModel):
+    simulation_id: int | None = None
+    simulation: InlineSimulation | None = None
+    n_iterations: int = 200
+    seed: int = 42
+
 class BayesianObservation(BaseModel):
     time_h: float
     concentration_ng_ml: float
@@ -302,3 +308,101 @@ def run_bayesian_pk(req: BayesianPKRequest) -> dict[str, Any]:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return {'map_cl_l_per_h': result.map_cl_l_per_h, 'map_vd_l': result.map_vd_l, 'ci95_cl_l_per_h': list(result.ci95_cl_l_per_h), 'ci95_vd_l': list(result.ci95_vd_l), 'posterior_cov_log': result.posterior_cov_log, 'n_observations': result.n_observations, 'converged': result.converged, 'prediction_time_hours': result.prediction_time_hours.tolist(), 'prediction_ng_ml': result.prediction_ng_ml.tolist(), 'prediction_ci_low_ng_ml': result.prediction_ci_low_ng_ml.tolist(), 'prediction_ci_high_ng_ml': result.prediction_ci_high_ng_ml.tolist()}
+
+# Roughly the per-iteration cost of one forward simulation, in seconds per
+# simulated day, measured on the deployment target. Used to keep a request
+# inside the platform's function timeout instead of letting it die at 60s.
+_MC_SECONDS_PER_ITER_DAY = 0.008
+_MC_TIME_BUDGET_S = 25.0
+
+
+def _monte_carlo_iteration_cap(horizon_days: int) -> int:
+    """Largest iteration count that should finish inside the time budget."""
+    per_iter = max(_MC_SECONDS_PER_ITER_DAY * max(horizon_days, 1), 1e-6)
+    return max(25, min(1000, int(_MC_TIME_BUDGET_S / per_iter)))
+
+
+@router.post('/monte-carlo')
+def run_monte_carlo(req: MonteCarloRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Population variability envelope for a regimen.
+
+    Resamples clearance, volume of distribution and absorption rate per virtual
+    subject from lognormal inter-individual distributions, runs the full PK
+    model for each, and reports percentile bands plus the probability of
+    sitting below, inside or above the therapeutic window at each time point.
+    """
+    from models import Medication
+    from services.monte_carlo import MonteCarloSimulator
+    from services.simulation_builder import build_config_from_dose_events
+
+    spec = req.simulation
+    if spec is not None:
+        events = spec.dose_schedules
+        horizon = spec.horizon_days
+        kwargs = dict(
+            horizon_days=spec.horizon_days,
+            cyp2d6_phenotype=spec.cyp2d6_phenotype,
+            cyp2c19_phenotype=spec.cyp2c19_phenotype,
+            smoking=spec.smoking_status,
+            patient_weight_kg=spec.patient_weight_kg,
+        )
+    elif req.simulation_id is not None:
+        from models import DoseSchedule, Simulation
+        sim = db.query(Simulation).filter(Simulation.id == req.simulation_id).first()
+        if not sim:
+            raise HTTPException(404, f'Simulation {req.simulation_id} not found')
+        rows = db.query(DoseSchedule).filter(
+            DoseSchedule.simulation_id == req.simulation_id
+        ).order_by(DoseSchedule.event_day).all()
+        events = [
+            {'medication_id': s.medication_id, 'event_type': s.event_type,
+             'event_day': s.event_day, 'dose_mg': float(s.dose_mg),
+             'frequency': s.frequency}
+            for s in rows
+        ]
+        horizon = sim.horizon_days or 56
+        kwargs = dict(
+            horizon_days=sim.horizon_days,
+            cyp2d6_phenotype=sim.cyp2d6_phenotype,
+            cyp2c19_phenotype=sim.cyp2c19_phenotype,
+            smoking=bool(sim.smoking_status),
+            patient_weight_kg=sim.patient_weight_kg,
+        )
+    else:
+        raise HTTPException(400, 'provide either `simulation` (inline spec) or `simulation_id`')
+
+    try:
+        config = build_config_from_dose_events(db, events, **kwargs)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    # Therapeutic windows come from the curated formulary, so the probability
+    # bands are anchored to published ranges rather than invented ones.
+    med_ids = list({int(e['medication_id']) for e in events})
+    therapeutic: dict[str, tuple[float, float]] = {}
+    toxic: dict[str, float] = {}
+    for m in db.query(Medication).filter(Medication.id.in_(med_ids)).all():
+        if m.therapeutic_min_ng_ml is not None and m.therapeutic_max_ng_ml is not None:
+            therapeutic[m.generic_name] = (
+                float(m.therapeutic_min_ng_ml), float(m.therapeutic_max_ng_ml)
+            )
+        if m.toxic_threshold_ng_ml is not None:
+            toxic[m.generic_name] = float(m.toxic_threshold_ng_ml)
+
+    cap = _monte_carlo_iteration_cap(horizon or 56)
+    requested = max(1, int(req.n_iterations))
+    n = min(requested, cap)
+
+    result = MonteCarloSimulator(n_iterations=n, seed=req.seed).run(
+        config, therapeutic_ranges=therapeutic, toxic_thresholds=toxic
+    )
+    return {
+        'time_hours': result.time_hours,
+        'drug_stats': result.drug_stats,
+        'n_iterations': n,
+        'requested_iterations': requested,
+        'iteration_cap': cap,
+        'capped': n < requested,
+        'therapeutic_ranges': {k: list(v) for k, v in therapeutic.items()},
+        'toxic_thresholds': toxic,
+    }
