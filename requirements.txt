@@ -2,12 +2,17 @@
 #
 # Deliberately excludes psycopg2-binary: the serverless deployment runs on the
 # default in-memory SQLite database, so the Postgres driver would only add
-# weight to the function bundle. backend/requirements.txt keeps it for the
-# Docker Compose stack.
+# weight to the function bundle. backend/requirements.txt keeps it, and its
+# exact pins, for the Docker Compose stack.
+#
+# The pure-Python packages are pinned because their behaviour matters. The
+# C-extension packages are given floors instead: their wheels are built per
+# Python ABI, so an exact pin fails to install whenever the platform's Python
+# version moves ahead of the pinned release.
 fastapi==0.115.6
 sqlalchemy==2.0.36
 pydantic==2.10.3
 python-multipart==0.0.17
-numpy==2.1.3
-scipy==1.14.1
-networkx>=3.0
+numpy>=2.1,<3
+scipy>=1.14,<2
+networkx>=3.0,<4

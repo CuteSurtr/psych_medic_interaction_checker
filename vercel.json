@@ -5,7 +5,6 @@
   "functions": {
     "api/index.py": {
       "includeFiles": "backend/**",
-      "memory": 1024,
       "maxDuration": 60
     }
   },

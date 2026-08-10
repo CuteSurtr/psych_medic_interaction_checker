@@ -1,0 +1,7 @@
+# Dependencies for the Vercel Python serverless function.
+#
+# @vercel/python resolves requirements.txt next to the entrypoint before
+# falling back to the project root, so keeping a copy here guarantees the
+# install runs regardless of how the project root is detected. The root
+# requirements.txt is the single source of truth; this file just includes it.
+-r ../requirements.txt

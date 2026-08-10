@@ -38,6 +38,34 @@ try:
     create_tables()
     seed_if_empty()
 
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(404)
+    async def _not_found(request, exc):
+        """404s that name the path the app actually received.
+
+        Vercel now warns that internal rewrites in backend-framework projects
+        route on the *rewritten* destination. If that applies here, the app
+        would see `/api/index` instead of the requested route and every call
+        would 404 for a non-obvious reason. Saying which path arrived makes
+        that immediately visible rather than looking like a missing endpoint.
+        """
+        return JSONResponse(
+            status_code=404,
+            content={
+                "detail": "Not Found",
+                "received_path": request.url.path,
+                "hint": (
+                    "If received_path is '/api/index' rather than the route "
+                    "requested, the platform applied the vercel.json rewrite "
+                    "before the app saw the URL; drop the /api/(.*) rewrite."
+                ),
+                "known_paths": sorted(
+                    {getattr(r, "path", "") for r in app.routes}
+                )[:80],
+            },
+        )
+
 except Exception:  # noqa: BLE001 - report anything that stops the app booting
     _TRACEBACK = traceback.format_exc()
     print("NeuroTrace API failed to start:\n" + _TRACEBACK, file=sys.stderr, flush=True)
