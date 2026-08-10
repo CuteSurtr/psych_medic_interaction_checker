@@ -66,6 +66,20 @@ class MonteCarloRequest(BaseModel):
     n_iterations: int = 200
     seed: int = 42
 
+class OptimalDesignRequest(BaseModel):
+    """Where to place TDM samples. PK parameters come from the formulary when a
+    medication_id is given, and any explicit value overrides it."""
+    medication_id: int | None = None
+    dose_mg: float = 20.0
+    cl_l_per_h: float | None = None
+    vd_l: float | None = None
+    ka_per_h: float | None = None
+    n_samples: int = 3
+    horizon_h: float = 24.0
+    grid_step_h: float = 0.5
+    sigma_prop: float = 0.2
+    reference_times_h: list[float] | None = None
+
 class BayesianObservation(BaseModel):
     time_h: float
     concentration_ng_ml: float
@@ -405,4 +419,65 @@ def run_monte_carlo(req: MonteCarloRequest, db: Session = Depends(get_db)) -> di
         'capped': n < requested,
         'therapeutic_ranges': {k: list(v) for k, v in therapeutic.items()},
         'toxic_thresholds': toxic,
+    }
+
+
+@router.post('/optimal-design')
+def run_optimal_design(req: OptimalDesignRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """D-optimal therapeutic drug monitoring schedule.
+
+    Answers the question that precedes Bayesian estimation: given this drug,
+    when should the levels actually be drawn? Compares the optimal schedule
+    against a reference (trough-only by default, which is what routine TDM
+    usually collects).
+    """
+    from models import Medication
+    from services.optimal_design import optimize_sampling_times
+
+    cl, vd, ka, name = req.cl_l_per_h, req.vd_l, req.ka_per_h, None
+    if req.medication_id is not None:
+        med = db.query(Medication).filter(Medication.id == req.medication_id).first()
+        if not med:
+            raise HTTPException(404, f'Medication {req.medication_id} not found')
+        name = med.generic_name
+        cl = cl if cl is not None else float(med.clearance_l_per_h or 0) or None
+        vd = vd if vd is not None else float(med.volume_of_distribution_l or 0) or None
+        ka = ka if ka is not None else float(med.absorption_rate_constant or 0) or None
+
+    missing = [n for n, v in (('cl_l_per_h', cl), ('vd_l', vd), ('ka_per_h', ka)) if not v or v <= 0]
+    if missing:
+        raise HTTPException(
+            400,
+            f'missing positive PK parameters {missing}; supply them directly or '
+            'choose a medication_id whose formulary entry has them',
+        )
+
+    # Trough-only is the default comparator because it is the schedule the
+    # optimal design is meant to argue against.
+    reference = req.reference_times_h or [req.horizon_h] * max(req.n_samples, 1)
+
+    try:
+        res = optimize_sampling_times(
+            dose_mg=req.dose_mg, cl=cl, vd=vd, ka=ka,
+            n_samples=req.n_samples, horizon_h=req.horizon_h,
+            grid_step_h=req.grid_step_h, sigma_prop=req.sigma_prop,
+            reference_times_h=reference,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    return {
+        'drug_name': name,
+        'pk_parameters': {'cl_l_per_h': cl, 'vd_l': vd, 'ka_per_h': ka, 'dose_mg': req.dose_mg},
+        'optimal_times_h': res.sampling_times_h,
+        'reference_times_h': res.reference_times_h,
+        'd_efficiency_of_reference_pct': res.d_efficiency_vs_reference_pct,
+        'log_det_fim': res.log_det_fim,
+        'd_criterion': res.d_criterion,
+        'fisher_information': res.fisher_information,
+        'parameter_names': res.parameter_names,
+        'relative_standard_errors_pct': res.relative_standard_errors_pct,
+        'correlation_matrix': res.correlation_matrix,
+        'condition_number': res.condition_number,
+        'grid_step_h': res.grid_step_h,
     }

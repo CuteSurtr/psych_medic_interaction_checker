@@ -32,7 +32,8 @@
 14. [Tissue Distribution PDE](#xiv-tissue-distribution-pde)
 15. [Receptor Occupancy](#xv-receptor-occupancy)
 16. [Hepatic Extraction](#xvi-hepatic-extraction)
-17. [References](#references)
+17. [Optimal Experimental Design](#xvii-optimal-experimental-design)
+18. [References](#references)
 
 ---
 
@@ -719,6 +720,93 @@ The same inhibitor therefore acts through completely different mechanisms
 depending on where the substrate sits on this curve, and the extraction ratio
 is what tells you which. This is why the panel reports $E_H$ and its
 classification alongside the clearance numbers rather than the clearance alone.
+
+---
+
+## XVII. Optimal Experimental Design
+
+Bayesian estimation asks: given these levels, what are this patient's
+parameters? This section asks the question that comes first: *when should the
+levels be drawn?*
+
+### 17.1 Sensitivity and the information matrix
+
+Model the observation at time $t_i$ as
+
+$$
+y_i = c(t_i; \theta) + \varepsilon_i, \qquad
+\operatorname{Var}(\varepsilon_i) = (\sigma_{\text{prop}} c_i)^2 + \sigma_{\text{add}}^2
+$$
+
+with $\theta = (\log CL, \log V_d, \log k_a)$. Log parameterisation matches the
+Bayesian module and makes the matrix scale-free, so a determinant comparison is
+not dominated by whichever parameter happens to have the largest units.
+
+The sensitivity vector is $s_i = \partial c(t_i) / \partial \theta$, and for
+independent observations the Fisher information matrix is
+
+$$
+\mathcal{I}(\theta) = \sum_i \frac{s_i s_i^{\!\top}}{\operatorname{Var}(\varepsilon_i)}
+$$
+
+Two structural facts follow immediately and are both asserted in the tests.
+The sum makes information **additive** across samples, so adding an observation
+can never reduce it. And each term is an outer product of rank one, so $n$
+samples give a matrix of rank at most $n$: **fewer samples than parameters
+leaves $\mathcal{I}$ singular**, and no amount of clever placement fixes it.
+
+Dividing by the variance is what stops the optimiser from stacking every sample
+at the concentration peak. The peak carries the largest signal, but under a
+proportional error model it carries proportionally the largest noise, so it is
+not automatically the most informative place to look. A consequence worth
+noting: under purely proportional error the FIM is **independent of dose**, so
+a larger dose buys no additional parameter information.
+
+### 17.2 D-optimality
+
+The asymptotic covariance of the maximum-likelihood estimate is
+$\mathcal{I}^{-1}$, so the joint confidence ellipsoid has volume proportional
+to $|\mathcal{I}|^{-1/2}$. Minimising that volume means
+
+$$
+\xi^\star = \arg\max_{\xi} \; \log \det \mathcal{I}(\theta, \xi)
+$$
+
+over sampling schedules $\xi$. Reported alongside it are the per-parameter
+relative standard errors $100\sqrt{(\mathcal{I}^{-1})_{jj}}$, which are already
+relative because the parameters are logs, the parameter correlation matrix, and
+the condition number of $\mathcal{I}$. A large condition number is the warning
+sign: it means some direction in parameter space is nearly uninformed, which is
+the same pathology section XVIII treats as practical non-identifiability.
+
+Designs are compared with **D-efficiency**, normalised per parameter so the
+number is interpretable:
+
+$$
+\text{Eff}_D = \left( \frac{|\mathcal{I}_{\text{ref}}|}{|\mathcal{I}^\star|} \right)^{1/p}
+$$
+
+### 17.3 Why this matters clinically
+
+Routine therapeutic drug monitoring collects a trough level. For the
+three-parameter model a trough-only schedule scores a D-efficiency **under 5%**
+against the optimal design; for the seeded fluoxetine parameters it rounds to
+zero. The reason is structural rather than numerical: at trough the profile is
+a single decaying exponential, so the absorption sensitivity has essentially
+vanished and the clearance and volume sensitivities have become nearly
+collinear. The samples are real, the needle is real, and the information is
+close to nil.
+
+The optimal three-point design instead spreads across distinct kinetic phases,
+one sample in absorption, one near the peak, one deep in elimination, because
+each phase is where a different parameter's sensitivity is largest. This is the
+practical payoff: **two well-placed samples can identify parameters that six
+badly placed samples cannot.**
+
+The search is exhaustive over a discrete grid of candidate times. That is
+$\binom{|\text{grid}|}{n}$ determinant evaluations, so the grid is coarsened
+automatically when the count would exceed the budget, and the step actually
+used is reported rather than hidden.
 
 ---
 
