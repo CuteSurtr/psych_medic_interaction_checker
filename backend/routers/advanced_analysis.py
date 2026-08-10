@@ -101,6 +101,19 @@ class TreatmentPolicyRequest(BaseModel):
     action_costs: dict[str, float] | None = None
     actions: list[str] | None = None
 
+class IdentifiabilityRequest(BaseModel):
+    """Can these parameters be recovered from this sampling schedule?"""
+    medication_id: int | None = None
+    dose_mg: float = 100.0
+    cl_l_per_h: float | None = None
+    vd_l: float | None = None
+    ka_per_h: float | None = None
+    sampling_times_h: list[float] | None = None
+    observations_ng_ml: list[float] | None = None
+    sigma_prop: float = 0.2
+    run_profiles: bool = True
+    noise_seed: int = 0
+
 class BayesianObservation(BaseModel):
     time_h: float
     concentration_ng_ml: float
@@ -637,4 +650,89 @@ def run_treatment_policy(req: TreatmentPolicyRequest) -> dict[str, Any]:
         'constant_policy_values': res.policy_values_vs_fixed,
         'best_constant_action': res.best_fixed_action,
         'advantage_over_best_constant': res.advantage_over_best_fixed,
+    }
+
+
+@router.post('/identifiability')
+def run_identifiability(req: IdentifiabilityRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Structural and practical identifiability for a sampling schedule.
+
+    Fitting always returns numbers; this says whether they mean anything.
+    Structural failure is a property of the model and schedule, detected from
+    the rank and collinearity of the sensitivity matrix. Practical failure is a
+    property of this data, detected by profiling the likelihood.
+    """
+    import numpy as np
+
+    from models import Medication
+    from services.identifiability import analyse
+    from services.optimal_design import concentration
+
+    cl, vd, ka, name = req.cl_l_per_h, req.vd_l, req.ka_per_h, None
+    if req.medication_id is not None:
+        med = db.query(Medication).filter(Medication.id == req.medication_id).first()
+        if not med:
+            raise HTTPException(404, f'Medication {req.medication_id} not found')
+        name = med.generic_name
+        cl = cl if cl is not None else float(med.clearance_l_per_h or 0) or None
+        vd = vd if vd is not None else float(med.volume_of_distribution_l or 0) or None
+        ka = ka if ka is not None else float(med.absorption_rate_constant or 0) or None
+
+    missing = [n for n, v in (('cl_l_per_h', cl), ('vd_l', vd), ('ka_per_h', ka)) if not v or v <= 0]
+    if missing:
+        raise HTTPException(400, f'missing positive PK parameters {missing}')
+
+    times = np.asarray(req.sampling_times_h or [0.5, 2.0, 6.0, 12.0, 24.0], dtype=float)
+    if times.size < 1:
+        raise HTTPException(400, 'at least one sampling time is required')
+
+    if req.observations_ng_ml is not None:
+        obs = np.asarray(req.observations_ng_ml, dtype=float)
+        if obs.size != times.size:
+            raise HTTPException(400, 'observations and sampling_times_h must have equal length')
+        simulated = False
+    else:
+        # No data supplied: simulate from the nominal parameters so the schedule
+        # itself can be assessed before anyone is stuck with a needle.
+        rng = np.random.default_rng(req.noise_seed)
+        truth = concentration(times, req.dose_mg, cl, vd, ka)
+        obs = truth * (1.0 + req.sigma_prop * rng.standard_normal(times.size))
+        simulated = True
+
+    res = analyse(times, obs, req.dose_mg, (cl, vd, ka),
+                  sigma_prop=req.sigma_prop, run_profiles=req.run_profiles)
+
+    def finite(x):
+        """JSON has no infinity or NaN, and a silent null here is exactly the
+        shape that crashed the analysis page before. Non-finite values are
+        returned as null alongside an explicit flag, so the client can render
+        "unbounded" rather than guess."""
+        return float(x) if np.isfinite(x) else None
+
+    return {
+        'drug_name': name,
+        'observations_were_simulated': simulated,
+        'sampling_times_h': times.tolist(),
+        'observations': obs.tolist(),
+        'pk_parameters': {'cl_l_per_h': cl, 'vd_l': vd, 'ka_per_h': ka, 'dose_mg': req.dose_mg},
+        'parameter_names': res.parameter_names,
+        'rank': res.rank,
+        'n_parameters': res.n_parameters,
+        'structurally_identifiable': res.structurally_identifiable,
+        'condition_number': finite(res.condition_number),
+        'condition_number_is_infinite': not np.isfinite(res.condition_number),
+        'singular_values': res.singular_values,
+        'collinearity_index': finite(res.collinearity_index),
+        'collinearity_index_is_infinite': not np.isfinite(res.collinearity_index),
+        'worst_constrained_direction': res.worst_direction,
+        'practically_identifiable': res.practically_identifiable,
+        'notes': res.notes,
+        'profiles': [
+            {
+                'parameter': p.parameter, 'grid': p.grid, 'profile_nll': p.profile_nll,
+                'mle': p.mle, 'ci_lower': p.ci_lower, 'ci_upper': p.ci_upper,
+                'identifiable': p.identifiable, 'verdict': p.verdict,
+            }
+            for p in res.profiles
+        ],
     }

@@ -35,7 +35,8 @@
 17. [Optimal Experimental Design](#xvii-optimal-experimental-design)
 18. [Global Sensitivity Analysis](#xviii-global-sensitivity-analysis)
 19. [Treatment Policy as a Markov Decision Process](#xix-treatment-policy-as-a-markov-decision-process)
-20. [References](#references)
+20. [Identifiability](#xx-identifiability)
+21. [References](#references)
 
 ---
 
@@ -975,6 +976,96 @@ transition model does not encode that treatment helps a patient *leave* the
 hospitalised state, which is why the policy recommends `none` there; that is a
 property of the seeded chain rather than a clinical claim, and it would change
 if the transition data did.
+
+---
+
+## XX. Identifiability
+
+Fitting always returns numbers. Whether those numbers mean anything is a
+separate question, and it is the one to ask before reporting an estimate as a
+result.
+
+### 20.1 Two different failures
+
+**Structural** non-identifiability is a property of the model: two distinct
+parameter sets produce identical predictions, so no amount of data can separate
+them.
+
+**Practical** non-identifiability is a property of the data: the model could
+separate them in principle, but this sampling schedule and this noise level do
+not.
+
+The distinction is not academic. Structural failure is fixed by changing the
+model; practical failure is fixed by drawing a different sample, which is
+exactly what section XVII computes.
+
+### 20.2 Structural diagnosis: rank and collinearity
+
+Build the sensitivity matrix $S_{ij} = \partial c(t_i) / \partial \theta_j$ and
+normalise each column to unit length. Normalisation matters: it makes the
+diagnostic measure the *angle* between parameter effects rather than their
+relative magnitudes, and two parameters can have very different influence while
+remaining perfectly distinguishable.
+
+If $\operatorname{rank}(S) < p$ then some direction in parameter space has no
+effect on the prediction at all, and that combination is unidentifiable outright.
+Short of that, the **collinearity index** of Brun et al. (2001),
+
+$$
+\gamma = \frac{1}{\sqrt{\lambda_{\min}\left(\tilde{S}^{\!\top}\tilde{S}\right)}}
+$$
+
+measures how close the columns come to dependence; $\gamma \gtrsim 10$ to $20$
+is the conventional point at which combinations stop being separable in
+practice. The eigenvector of $\lambda_{\min}$ is the least-constrained
+direction, and it is reported by name so the diagnosis says *which* combination
+is the problem rather than only that one exists.
+
+### 20.3 Practical diagnosis: profile likelihood
+
+For each parameter, fix it across a grid and **re-optimise all the others** at
+every point:
+
+$$
+\text{PL}(\theta_j) = \min_{\theta_{-j}} \; \text{NLL}(\theta_j, \theta_{-j})
+$$
+
+Re-optimising is what separates a profile from a naive slice. A slice can look
+sharply curved purely because the other parameters were pinned at values that no
+longer fit, which manufactures confidence that is not there.
+
+The confidence interval is where the profile crosses
+$\Delta\text{NLL} = \chi^2_{1,0.95}/2 = 1.92$. A profile that never crosses the
+threshold on one side has **no bound** in that direction: the parameter can move
+arbitrarily far without meaningfully worsening the fit.
+
+One implementation subtlety, and it is easy to get wrong. The profile must be
+measured against the **actual maximum** of the likelihood for the data at hand,
+not against the parameters that generated it. With noisy observations the two
+differ, the profile then dips below zero, and every interval shifts, because the
+$\chi^2$ threshold is defined relative to the attained maximum. The
+implementation therefore refits before profiling; the tests catch the error by
+asserting the profile is non-negative and attains zero at the optimum.
+
+### 20.4 What it says about trough-only sampling
+
+The diagnostics agree with section XVII from the opposite direction.
+
+| Schedule | Rank | $\gamma$ | Verdict |
+|---|---|---|---|
+| 0.5, 1, 2, 4, 8, 18 h | 3/3 | 2.6 | identifiable, all intervals two-sided |
+| 22, 23, 24 h | 2/3 | $\infty$ | rank-deficient; $V_d$ and $k_a$ profiles flat |
+| 24, 24, 24 h | 1/3 | $\infty$ | three samples carrying the information of one |
+| 0.5, 0.6, 0.7 h | 3/3 | 1424 | full rank but hopelessly collinear |
+
+The last row is the instructive one: full rank is necessary but not sufficient.
+A schedule confined to a single kinetic phase technically constrains every
+parameter and practically constrains almost none.
+
+Section XVII reaches this conclusion from the determinant of the information
+matrix, and this section reaches it from the rank of the sensitivity matrix and
+the curvature of the likelihood. Two independent diagnostics agreeing on the
+same clinical practice is worth more than either alone.
 
 ---
 
