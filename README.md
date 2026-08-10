@@ -515,22 +515,31 @@ on state written by a previous one:
   `hepatic-extraction`) accept an inline `simulation` object as well as a
   `simulation_id`.
 
+### Deployment self-check
+
+`GET /api/__status` reports whether seeding succeeded, the Python version, and
+the number of registered routes. It is the fastest way to confirm a deploy is
+healthy.
+
+### Keep the `app` binding at the top level
+
+Vercel detects this project as a FastAPI backend and statically scans
+`api/index.py` for a module-level `app`. `from main import app` must stay
+unconditional at the top level. Wrapping it in `try`/`except` hides it from
+that scan and fails the build with *"Found api/index.py but it does not define
+a top-level `app` FastAPI instance"*.
+
 ### Troubleshooting a crashed function
 
-If `/api/*` returns 500, open the URL directly (e.g. `/health`). The function
-catches any startup failure, prints the traceback to stderr where `vercel logs`
-picks it up, and serves it as plain text along with `sys.path` and the contents
-of `backend/`. That turns an opaque `FUNCTION_INVOCATION_FAILED` into the
-actual `ImportError`.
+If `/api/*` returns 500, check `vercel logs` - the Python runtime prints the
+full import traceback there.
 
-The two settings this depends on, both of which are already in `vercel.json`:
-
-- `functions."api/index.py".includeFiles` must be `"backend/**"`. Vercel does
-  not ship sibling directories into a function bundle, so without it
-  `backend/` is absent at runtime and every import fails.
-- Do **not** override `installCommand`. Doing so can skip the
-  `pip install -r requirements.txt` step that the Python runtime relies on,
-  leaving FastAPI itself missing.
+Do **not** override `installCommand` in `vercel.json`. Doing so suppresses the
+`pip install -r requirements.txt` step for the whole project, and the function
+then fails with `ModuleNotFoundError: No module named 'sqlalchemy'`. A copy of
+the requirements lives at `api/requirements.txt` as well, because
+`@vercel/python` resolves a requirements file next to the entrypoint before
+falling back to the project root.
 
 To use durable storage instead, set `DATABASE_URL` to a Postgres connection
 string (Neon, Supabase, Vercel Postgres) in the project's environment
