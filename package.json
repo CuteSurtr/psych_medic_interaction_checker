@@ -1,0 +1,10 @@
+{
+  "name": "neurotrace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build entry point for the Vercel deployment. The application lives in frontend/ (Vite SPA) and backend/ (FastAPI, exposed through api/index.py).",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "dev": "cd frontend && npm run dev"
+  }
+}

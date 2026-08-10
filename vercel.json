@@ -1,10 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "cd frontend && npm ci && npm run build",
+  "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
-  "installCommand": "echo no root install needed",
   "functions": {
     "api/index.py": {
+      "includeFiles": "backend/**",
       "memory": 1024,
       "maxDuration": 60
     }

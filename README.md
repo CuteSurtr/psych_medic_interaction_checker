@@ -515,6 +515,23 @@ on state written by a previous one:
   `hepatic-extraction`) accept an inline `simulation` object as well as a
   `simulation_id`.
 
+### Troubleshooting a crashed function
+
+If `/api/*` returns 500, open the URL directly (e.g. `/health`). The function
+catches any startup failure, prints the traceback to stderr where `vercel logs`
+picks it up, and serves it as plain text along with `sys.path` and the contents
+of `backend/`. That turns an opaque `FUNCTION_INVOCATION_FAILED` into the
+actual `ImportError`.
+
+The two settings this depends on, both of which are already in `vercel.json`:
+
+- `functions."api/index.py".includeFiles` must be `"backend/**"`. Vercel does
+  not ship sibling directories into a function bundle, so without it
+  `backend/` is absent at runtime and every import fails.
+- Do **not** override `installCommand`. Doing so can skip the
+  `pip install -r requirements.txt` step that the Python runtime relies on,
+  leaving FastAPI itself missing.
+
 To use durable storage instead, set `DATABASE_URL` to a Postgres connection
 string (Neon, Supabase, Vercel Postgres) in the project's environment
 variables. Nothing else changes.
