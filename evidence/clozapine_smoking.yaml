@@ -1,0 +1,191 @@
+| Paper-to-code evidence map: CYP1A2 induction by smoking, and clozapine
+| exposure change on cessation.
+|
+| Answers: where did this equation, parameter and threshold come from?
+mechanism: CYP1A2 induction by tobacco smoke and de-induction on cessation
+
+clinical_question: >
+  A patient stable on clozapine stops smoking, often abruptly on admission to a
+  non-smoking unit. How far and how fast do clozapine concentrations rise?
+
+known_mechanism: >
+  Polycyclic aromatic hydrocarbons in tobacco smoke induce CYP1A2 via the aryl
+  hydrocarbon receptor, increasing enzyme synthesis. Nicotine is not the
+  inducer, so nicotine replacement does not maintain induction. Clozapine is
+  metabolised substantially by CYP1A2, so loss of induction reduces clearance
+  and raises plasma concentrations. The effect is on enzyme synthesis, making
+  the enzyme-pool turnover model the appropriate representation rather than a
+  competitive inhibition term.
+
+references:
+  - key: FABER_FUHR_2004
+    title: Time response of cytochrome P450 1A2 activity on cessation of heavy smoking
+    first_author: Faber MS
+    journal: Clinical Pharmacology and Therapeutics
+    year: 2004
+    volume: 76
+    pages: 178-184
+    doi: 10.1016/j.clpt.2004.04.003
+    pmid: '15289794'
+    url: https://doi.org/10.1016/j.clpt.2004.04.003
+    pubmed_url: https://pubmed.ncbi.nlm.nih.gov/15289794/
+    evidence_type: human_pk_study
+    citation_verified: true
+    verified_on: '2026-08-15'
+    verified_via: crossref_api
+    role: parameterisation
+    population: 12 heavy smokers, 8 male and 4 female, all white, 20+ cigarettes/day
+    findings:
+      - caffeine clearance fell 36.1% (95% CI 30.9 to 42.2) on cessation
+      - from 2.47 mL/min/kg (2.03-3.00) to 1.53 mL/min/kg (1.24-1.89)
+      - apparent half-life of CYP1A2 activity decrease 38.6 h (95% CI 27.4-54.4)
+      - monoexponential decay to a residual value, fitted by nonlinear regression
+      - authors propose stepwise ~10% daily dose reduction to day 4 with TDM
+
+  - key: MEYER_2001
+    title: 'Individual changes in clozapine levels after smoking cessation: results and a predictive model'
+    first_author: Meyer JM
+    journal: Journal of Clinical Psychopharmacology
+    year: 2001
+    volume: 21
+    pages: 569-574
+    doi: 10.1097/00004714-200112000-00005
+    pmid: '11763003'
+    url: https://doi.org/10.1097/00004714-200112000-00005
+    pubmed_url: https://pubmed.ncbi.nlm.nih.gov/11763003/
+    evidence_type: observational
+    citation_verified: true
+    verified_on: '2026-08-15'
+    verified_via: crossref_api
+    role: external_validation
+    population: 11 inpatients on stable clozapine doses, Oregon State Hospital
+    design: within_patient_before_after
+    findings:
+      - mean clozapine increase 71.9% from baseline 550.2 ng/mL (p<0.034)
+      - after removing statistical outliers, mean increase 57.4% (p<0.001)
+      - 'predictive model: nonsmoker level = 45.3 + 1.474 x smoker level, R2 0.809'
+      - one serious adverse event (aspiration pneumonia) at 3066 ng/mL
+
+  - key: FLANAGAN_2024
+    title: 'Plasma clozapine and N-desmethylclozapine concentrations and the clozapine/norclozapine ratio: effect of dose, sex, and cigarette smoking'
+    first_author: Flanagan RJ
+    journal: Journal of Clinical Psychopharmacology
+    year: 2024
+    volume: 44
+    pages: 492-501
+    doi: 10.1097/jcp.0000000000001909
+    pmid: '39173038'
+    url: https://doi.org/10.1097/jcp.0000000000001909
+    pubmed_url: https://pubmed.ncbi.nlm.nih.gov/39173038/
+    evidence_type: observational
+    citation_verified: true
+    verified_on: '2026-08-15'
+    verified_via: crossref_api
+    role: acceptance_range
+    population: TDM audit 1996-2017, approximately 231,000 samples
+    findings:
+      - median plasma clozapine difference nonsmokers vs smokers averaged 50%
+      - greatest at 151-250 mg/day, men 76% and women 59%
+      - in men declined to 34% at doses of 850 mg/day or above
+      - in women remained 40% to 54%
+      - authors state these data explain the varying effect sizes across studies
+
+  - key: VANDERWEIDE_2003
+    title: The effect of smoking and CYP1A2 genetic polymorphism on clozapine clearance and dose requirement
+    first_author: van der Weide J
+    journal: Pharmacogenetics
+    year: 2003
+    volume: 13
+    pages: 169-172
+    doi: 10.1097/00008571-200303000-00006
+    pmid: '12618594'
+    url: https://doi.org/10.1097/00008571-200303000-00006
+    pubmed_url: https://pubmed.ncbi.nlm.nih.gov/12618594/
+    evidence_type: observational
+    citation_verified: true
+    verified_on: '2026-08-15'
+    verified_via: crossref_api
+    role: considered_and_rejected_as_target
+    population: 80 smoking and non-smoking patients on long-term clozapine
+    design: cross_sectional
+    findings:
+      - concentration/dose ratio 2.5x lower in smokers
+      - mean maintenance dose smokers 382 mg/day vs non-smokers 197 mg/day (p<0.01)
+      - CYP1A2 genotype showed no significant clinical effect
+    why_not_used_as_validation_target: >
+      A 2.5x difference cannot arise from a 1.57x change in CYP1A2 activity for
+      any physically possible fraction metabolised, since the maximum achievable
+      ratio is 1.57x even when CYP1A2 accounts for all clearance. The design
+      explains the gap: smokers and non-smokers sat in different dose bands
+      (382 vs 197 mg/day) and FLANAGAN_2024 shows the effect size is strongly
+      dose-dependent, so a cross-sectional concentration/dose comparison
+      conflates the smoking effect with dose-dependent nonlinearity. Recorded
+      here rather than discarded, because the discrepancy is informative.
+
+parameters_supported:
+  - name: CYP1A2_TURNOVER_HALFLIFE_H
+    value: 38.6
+    units: hour
+    range: [27.4, 54.4]
+    from: FABER_FUHR_2004
+    evidence_class: directly_measured
+  - name: SMOKING_CYP1A2_INDUCTION_RATIO
+    value: 1.5649
+    units: dimensionless
+    range: [1.4472, 1.7301]
+    from: FABER_FUHR_2004
+    evidence_class: literature_derived
+    derivation: reciprocal of the reported 36.1% (30.9-42.2) fall in caffeine clearance
+
+conflicting_evidence:
+  - parameter: CYP1A2 enzyme turnover half-life
+    values:
+      - source: FABER_FUHR_2004
+        value: 38.6 h
+        basis: in vivo human, caffeine probe, direct measurement of de-induction
+      - source: YANG_2008
+        value: approximately 90 h
+        basis: in vitro derived literature compilation
+    disagreement_factor: 2.3
+    resolution: >
+      Faber & Fuhr is used because it measures in vivo, in humans, the exact
+      quantity the model applies it to. A single enzyme pool has a single
+      turnover rate, so these cannot be reconciled by adding a second constant.
+      Yang remains the source for other CYPs where no comparable in vivo
+      de-induction measurement was located.
+
+implementation:
+  - backend/services/sourced_params.py
+  - backend/services/enzyme_kinetics.py
+  - backend/services/pk_simulator.py
+
+validation_scenarios:
+  - validation/scenarios/clozapine_smoking_cessation.yaml
+
+validation_type: external
+validation_rationale: >
+  Parameters come from FABER_FUHR_2004 (caffeine probe in healthy heavy
+  smokers). Validation targets come from MEYER_2001 and FLANAGAN_2024
+  (clozapine concentrations in psychiatric patients). Different drugs,
+  populations and measurement methods, so this is external validation rather
+  than fitting and testing on the same data.
+
+modeling_assumptions:
+  - Smoking is a saturated binary exposure. Cigarettes/day is not tracked, so
+    light smokers will have their induction overestimated.
+  - The EC50 of the normalised smoking exposure term is a modelling convention
+    chosen to saturate the Hill term. Only the saturated steady-state ratio is
+    evidence-based.
+  - CYP1A2 induction is assumed to act on synthesis rate, consistent with the
+    AhR-mediated transcriptional mechanism.
+
+limitations:
+  - Faber & Fuhr studied healthy volunteers, not patients on clozapine, and
+    used caffeine rather than clozapine as the probe substrate.
+  - The study population was all white; CYP1A2 inducibility varies by
+    CYP1A2*1F genotype and ancestry, which the model does not represent.
+  - Clozapine displays dose-dependent effect sizes (FLANAGAN_2024) suggesting
+    nonlinear kinetics that the current one-compartment linear-clearance model
+    does not capture.
+  - Concentration response lags enzyme response by clozapine's own half-life,
+    so the observed time to new steady state exceeds the 38.6 h enzyme constant.

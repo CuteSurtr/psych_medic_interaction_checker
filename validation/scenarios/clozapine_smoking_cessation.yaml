@@ -1,0 +1,121 @@
+key: clozapine_smoking_cessation
+title: Clozapine exposure after abrupt smoking cessation
+driver: clozapine_smoking_cessation
+evidence_file: evidence/clozapine_smoking.yaml
+
+description: >
+  A patient stable on clozapine stops smoking abruptly, as happens on admission
+  to a non-smoking unit. CYP1A2 induction is lost, clearance falls and plasma
+  clozapine rises. Tests whether the enzyme-pool model reproduces both the
+  magnitude and the time course reported in the literature.
+
+validation_type: external
+population: >
+  Model configured as a 70 kg adult on clozapine 200 mg twice daily at steady
+  state. Parameters derived from healthy heavy smokers (caffeine probe);
+  validation targets from psychiatric inpatients on clozapine.
+
+regimen:
+  drug: clozapine
+  dose_mg: 200
+  frequency: BID
+  duration_days: 42
+  smoking_before: true
+  smoking_after: false
+
+parameterisation_sources:
+  - FABER_FUHR_2004
+
+validation_sources:
+  - MEYER_2001
+  - FLANAGAN_2024
+
+endpoints:
+
+  # Direction before magnitude. If these fail, the magnitude endpoints are
+  # meaningless regardless of how close the numbers look.
+  - name: direction_clozapine_exposure_rises
+    units: ratio
+    source_key: MEYER_2001
+    note: Qualitative pharmacology check, evaluated before any magnitude endpoint.
+    acceptance:
+      type: direction
+      expected: increase
+      reference: 1.0
+
+  - name: direction_cyp1a2_activity_falls
+    units: ratio
+    source_key: FABER_FUHR_2004
+    note: CYP1A2 activity must fall relative to the induced state after cessation.
+    acceptance:
+      type: direction
+      expected: decrease
+      reference: 1.0
+
+  # Primary quantitative endpoint. The acceptance interval is the published
+  # dose-stratified range from a ~231,000 sample TDM audit, not an invented
+  # tolerance.
+  - name: clozapine_concentration_ratio_after_cessation
+    units: ratio
+    observed: 1.574
+    observed_low: 1.34
+    observed_high: 1.76
+    source_key: MEYER_2001 observed point, FLANAGAN_2024 acceptance range
+    note: >
+      Observed point is the Meyer 2001 outlier-trimmed mean increase of 57.4%
+      expressed as a ratio. Acceptance range is the Flanagan 2024 spread of
+      34% to 76% across dose bands and sexes.
+    acceptance:
+      type: within_literature_range
+      low: 1.34
+      high: 1.76
+
+  - name: clozapine_percent_increase_after_cessation
+    units: percent
+    observed: 57.4
+    observed_low: 34.0
+    observed_high: 76.0
+    source_key: MEYER_2001, FLANAGAN_2024
+    note: The same endpoint expressed the way it is reported clinically.
+    acceptance:
+      type: within_literature_range
+      low: 34.0
+      high: 76.0
+
+  # INTERNAL validation. Parameterised from this same source, so it confirms
+  # the implementation reproduces its input, not that the model predicts
+  # anything independent. Weighted accordingly.
+  - name: cyp1a2_deinduction_half_life_h
+    units: hour
+    observed: 38.6
+    observed_low: 27.4
+    observed_high: 54.4
+    source_key: FABER_FUHR_2004
+    note: >
+      INTERNAL validation. The engine is parameterised from this measurement,
+      so passing confirms correct implementation of the enzyme-pool relaxation
+      only. It is not evidence of predictive accuracy.
+    acceptance:
+      type: within_literature_range
+      low: 27.4
+      high: 54.4
+
+limitations:
+  - >
+    fm_CYP1A2 for clozapine is 0.70 and is NOT sourced. It is carried from the
+    seed data and dominates the predicted magnitude, so the primary endpoint is
+    only as good as that unsourced number.
+  - >
+    Faber & Fuhr studied healthy volunteers using caffeine as the probe, not
+    patients taking clozapine. Transferring the CYP1A2 activity ratio to
+    clozapine assumes probe-independence of enzyme induction.
+  - >
+    Flanagan 2024 shows the effect size varies with dose (34% to 76%), implying
+    nonlinear clozapine kinetics that the current linear-clearance model cannot
+    reproduce. The model predicts a single dose-independent ratio.
+  - >
+    The Faber & Fuhr cohort was all white. CYP1A2 inducibility varies with
+    CYP1A2*1F genotype and ancestry, which the model does not represent.
+  - >
+    Plasma concentration lags enzyme activity by clozapine's own half-life, so
+    the clinical time to a new steady state exceeds the 38.6 h enzyme constant.

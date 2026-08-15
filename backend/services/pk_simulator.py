@@ -6,6 +6,7 @@ from typing import Any
 from services.enzyme_kinetics import CYP_KDEG, EnzymeParams, InhibitorParams, MBIParams, InductionParams, competitive_inhibition_rate, enzyme_activity_factor, enzyme_pool_derivative
 from services.dose_scheduler import DoseEvent, MedicationSchedule, build_dose_timeline
 from services.metabolite_tracker import MetaboliteParams, build_metabolite_ode_terms
+from services.sourced_params import smoking_induction_term
 CYP_ACTIVITY_MULTIPLIERS: dict[str, dict[str, float]] = {'CYP2D6': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP2C19': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP3A4': {'normal': 1.0}, 'CYP1A2': {'normal': 1.0}}
 
 @dataclass
@@ -155,7 +156,9 @@ def _ode_rhs(t: float, y: np.ndarray, drugs: list[DrugConfig], metabolites: list
                 if mbi.enzyme_name == ename:
                     mbi_terms.append((c_drug, mbi.k_inact, mbi.k_i_conc))
         if smoking and ename == 'CYP1A2':
-            induction_terms.append((1.0, 1.0, 1.0))
+            # Sourced from Faber & Fuhr 2004 via sourced_params; previously a
+            # hard-coded (1.0, 1.0, 1.0) giving exactly 1.5x with no citation.
+            induction_terms.append(smoking_induction_term())
         dydt[enz_offset + e_idx] = enzyme_pool_derivative(e_level, k_deg, induction_terms, mbi_terms)
     return dydt
 

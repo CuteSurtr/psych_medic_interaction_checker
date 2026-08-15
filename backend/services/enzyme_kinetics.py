@@ -1,6 +1,21 @@
 import numpy as np
 from dataclasses import dataclass, field
-CYP_KDEG: dict[str, float] = {'CYP1A2': 0.0077, 'CYP2C9': 0.0087, 'CYP2C19': 0.0077, 'CYP2D6': 0.0136, 'CYP3A4': 0.0193, 'CYP2B6': 0.012, 'UGT1A4': 0.0077}
+from services.sourced_params import CYP1A2_KDEG_PER_H
+
+# Enzyme degradation rate constants (per hour). This constant sets how fast the
+# enzyme pool relaxes back to baseline after an inducer or inactivator is
+# withdrawn, so it governs the observed de-induction and MBI-recovery time
+# courses.
+#
+# CYP1A2 uses the in vivo value measured by Faber & Fuhr 2004 (t-half 38.6 h),
+# not the Yang et al. 2008 in vitro-derived figure (~90 h). The two disagree by
+# a factor of ~2.3; see services/sourced_params.py and validation/AUDIT.md F-1
+# for why the in vivo measurement is preferred.
+#
+# The remaining values are Yang et al. 2008. No comparable in vivo de-induction
+# measurement was located for them, so they are carried forward as-is and
+# remain UNVERIFIED against a primary source.
+CYP_KDEG: dict[str, float] = {'CYP1A2': CYP1A2_KDEG_PER_H, 'CYP2C9': 0.0087, 'CYP2C19': 0.0077, 'CYP2D6': 0.0136, 'CYP3A4': 0.0193, 'CYP2B6': 0.012, 'UGT1A4': 0.0077}
 
 @dataclass
 class EnzymeParams:

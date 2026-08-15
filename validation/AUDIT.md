@@ -21,11 +21,17 @@ The finding below that matters most is **F-1**: the enzyme de-induction half-lif
 
 | | |
 |---|---|
-| Findings | 21 |
-| Blocking a flagship demo | 8 |
+| Findings | 23 (2 resolved, 2 added by validation) |
+| Blocking a flagship demo | 6 |
 | Verified as correct | 4 |
-| Citations verified against Crossref | 9 / 9 |
-| Demo scenarios validatable today | **0 of 3** |
+| Citations verified against Crossref | 15 / 15 |
+| Demo scenarios validatable today | **1 of 3** (Demo 2 passing, 5/5 endpoints) |
+
+**Update 2026-08-15.** F-1 and F-2 are resolved and Demo 2 now validates against
+published data. Standing up that validation immediately surfaced two further
+findings, F-22 and F-23, neither of which was visible by reading the code. That
+is the argument for this document existing, made concrete: the validation suite
+failed first, and the failure localised to a parameter nobody had questioned.
 
 The ODE machinery is structurally sound. `enzyme_pool_derivative` correctly implements the Fahmi/Yang synthesis-degradation-inactivation form, bioavailability is applied exactly once, and the compartment bookkeeping is standard. **The problem is almost entirely in the parameters fed to that machinery, not the machinery itself.** That is good news: the fixes are data and provenance work, not an engine rewrite.
 
@@ -46,7 +52,22 @@ I verified that the papers exist and are the right papers. I did not read most o
 
 ### CRITICAL
 
-#### F-1. CYP1A2 de-induction half-life is ~2.3x too slow
+#### F-1. CYP1A2 de-induction half-life is ~2.3x too slow  `RESOLVED 2026-08-15`
+
+> **Resolution.** `CYP_KDEG['CYP1A2']` now derives from the Faber & Fuhr
+> measurement (t-half 38.6 h) via `services/sourced_params.py`, replacing the
+> Yang in vitro figure. Modelled de-induction half-life is now 38.6 h, inside
+> the published CI. Regression test:
+> `test_cyp1a2_decay_follows_published_half_life`.
+>
+> **The audit's original recommendation was wrong** and is corrected here. It
+> proposed adding a *separate* de-induction constant alongside `k_deg`. That is
+> not physically coherent: a single enzyme pool has a single turnover rate, and
+> both MBI recovery and de-induction are governed by it. The real situation is
+> that Yang (~90 h) and Faber & Fuhr (38.6 h) *disagree by 2.3x* about what
+> CYP1A2 turnover is. Faber & Fuhr is preferred because it measures in vivo, in
+> humans, the exact quantity the model uses it for. The disagreement is recorded
+> in `evidence/clozapine_smoking.yaml` rather than averaged away.
 
 **Code:** [`enzyme_kinetics.py:3`](../backend/services/enzyme_kinetics.py:3) sets `CYP_KDEG['CYP1A2'] = 0.0077 h⁻¹`, giving t½ = ln2/0.0077 = **90 h**. [`pk_simulator.py:145`](../backend/services/pk_simulator.py:145) uses this same constant as the sole determinant of how fast enzyme activity returns to baseline after an inducer is removed.
 
@@ -60,7 +81,17 @@ I verified that the papers exist and are the right papers. I did not read most o
 
 ---
 
-#### F-2. Smoking induction is a hard-coded magic tuple
+#### F-2. Smoking induction is a hard-coded magic tuple  `RESOLVED 2026-08-15`
+
+> **Resolution.** Replaced by `smoking_induction_term()` in
+> `services/sourced_params.py`, parameterised to an induction ratio of **1.5649
+> (95% CI 1.4472-1.7301)**, derived as the reciprocal of the 36.1% (30.9-42.2)
+> fall in caffeine clearance reported by Faber & Fuhr. The CI is carried on the
+> `Parameter` so Monte Carlo samples it instead of a point estimate. The
+> saturating-exposure representation (`SMOKING_EXPOSURE_UNITS`,
+> `SMOKING_CYP1A2_EC50`) remains an explicit `MODELING_ASSUMPTION`, because
+> cigarettes/day is not tracked. Only the saturated steady-state ratio is
+> evidence-based.
 
 **Code:** [`pk_simulator.py:157`](../backend/services/pk_simulator.py:157):
 ```python
@@ -173,6 +204,62 @@ This scenario is not a validation task. It is a mechanism implementation task.
 
 ---
 
+### CRITICAL: found by the validation suite, not by code review
+
+#### F-22. Clozapine Km is ~125x below any published value
+
+**Code:** the clozapine fixture uses `Km = 0.16 mg/L` for all three CYP
+pathways. Converted at MW 326.8 that is **0.49 uM**.
+
+**Literature:** Eiermann et al. (1997) report Km for clozapine demethylation in
+human liver microsomes as **61 +/- 21 uM** (19.93 mg/L). Other studies span 13
+to 120 uM. The lowest published value is 26x higher than the code's; the central
+value is 125x higher.
+
+**Why it matters, and why F-10 was under-graded.** The audit originally called
+Michaelis-Menten "effectively decorative" because `Vmax` is back-calculated as
+`CL x Km`, which makes the expression reduce to first-order clearance. That is
+only true when C is far below Km. At the seed Km, therapeutic clozapine sat at
+**C/Km = 3.7 to 7.8**, deep in the saturated regime, where reducing enzyme
+activity raises concentration superlinearly.
+
+Measured effect on the flagship prediction:
+
+| Km | C/Km | Predicted rise on cessation | vs published 1.34-1.76 |
+|---|---|---|---|
+| 0.16 mg/L (seed) | 3.7-7.8 | **2.079x** | FAIL |
+| 19.93 mg/L (Eiermann) | ~0.03 | **1.381x** | PASS |
+
+An arbitrary Km is therefore not harmless. It inflated the predicted
+drug-interaction effect by 50% while leaving clearance untouched, which is
+exactly the failure mode that would have been "fixed" by detuning the
+well-measured induction parameter had the audit not come first.
+
+**Scope:** corrected in the validation driver via
+`CLOZAPINE_CYP1A2_KM_MG_L`. **The seed database still carries the wrong value**
+and every other drug's Km remains unaudited. Guarded by
+`test_clozapine_stays_in_linear_kinetic_regime`.
+
+#### F-23. Clozapine fm_CYP1A2 conflicts with in vitro data
+
+The model uses **fm_CYP1A2 = 0.70**, unsourced, carried from seed data. Olesen &
+Linnet (2001) measured CYP1A2 contributing **30%** of clozapine N-demethylation
+at a therapeutically relevant 5 uM (CYP2C19 24%, CYP3A4 22%, CYP2C9 12%, CYP2D6
+6%).
+
+Substituting 0.30 predicts only a **1.17x** rise on cessation, well below the
+observed 1.34-1.76. Keeping 0.70 predicts 1.381x and matches. The in vitro
+fraction and the clinical effect size disagree, and the authors themselves note
+CYP1A2 appears more important clinically than in vitro.
+
+**This is deliberately left unresolved.** Picking whichever value makes the
+model agree would be fitting to the validation target. It is registered as a
+`MODELING_ASSUMPTION` with the conflict documented, and it is the single largest
+source of uncertainty in Demo 2. Guarded by
+`test_fm_cyp1a2_is_still_flagged_as_unsourced`.
+
+---
+
 ### MEDIUM: clinical risk layer
 
 #### F-13. The serotonin score is not the Hunter criteria
@@ -241,14 +328,37 @@ Stated explicitly, because a fair audit records what holds up:
 | Demo scenario | Status | Blocked by | Source available? |
 |---|---|---|---|
 | 1. Fluoxetine / norfluoxetine CYP2D6 persistence | **Blocked** | F-3, F-4, F-6, F-7 | Yes: Sager 2014 |
-| 2. Clozapine / smoking cessation | **Blocked** | F-1, F-2 | Yes: Faber & Fuhr 2004, Dobrinas 2011 |
+| 2. Clozapine / smoking cessation | **VALIDATED** (5/5 endpoints) | resolved F-1, F-2, F-22 | Faber & Fuhr 2004; Meyer 2001; Flanagan 2024 |
 | 3. Polypharmacy timeline | **Blocked** | F-11, F-18, plus all of the above | Partial |
 | Lamotrigine + valproate | **Not implementable** | F-12 (no UGT mechanism, wrong dose-response shape) | Yes, but mechanism must be built first |
 | Risperidone CYP2D6 PM | **Blocked** | F-11, F-5, F-7 | Yes: Caudle 2020, Hicks 2015 |
 
-**No demo scenario can be honestly validated against literature today.** Each is blocked on at least one fabricated constant that would otherwise become the tuning knob.
+### Demo 2 result
 
-Encouragingly, the primary sources needed to unblock Demos 1 and 2 are identified and citation-verified below. Those two are the shortest path to a genuine external validation.
+External validation: parameterised from Faber & Fuhr (caffeine probe, healthy
+heavy smokers), validated against Meyer 2001 and Flanagan 2024 (clozapine
+concentrations in psychiatric patients). Different drug, population and
+measurement method, so this is not fitting and testing on the same data.
+
+| Endpoint | Observed | Predicted | Status |
+|---|---:|---:|---|
+| Direction: exposure rises | increase | 1.381x | PASS |
+| Direction: CYP1A2 activity falls | decrease | 0.639x | PASS |
+| Concentration ratio after cessation | 1.574 (range 1.34-1.76) | **1.381** | PASS |
+| Percent increase after cessation | 57.4% (range 34-76%) | **38.1%** | PASS |
+| CYP1A2 de-induction half-life | 38.6 h (CI 27.4-54.4) | 38.6 h | PASS (internal) |
+
+Percent error against the Meyer point estimate is **-12.3%**: the model
+under-predicts, sitting in the lower half of the published range. The last row is
+*internal* validation, since the engine is parameterised from that same
+measurement; it confirms correct implementation, not predictive accuracy.
+
+The pass was earned by sourcing F-22's Km, not by tuning. The suite failed first
+at 2.079x, and the failure was traced to the Km rather than absorbed into the
+induction parameter.
+
+**One of three demos now validates.** The primary sources needed to unblock
+Demo 1 are identified and citation-verified below.
 
 ---
 
