@@ -107,7 +107,24 @@ This single line is the entire mechanistic basis of flagship Demo 2.
 
 ---
 
-#### F-3. Mechanism-based inhibition parameters are fabricated
+#### F-3. Mechanism-based inhibition parameters are fabricated  `RESOLVED 2026-08-15`
+
+> **Resolution.** The `potency == 'strong'` heuristic is removed. MBI is now
+> applied only where `documented_tdi(drug, enzyme)` finds a sourced entry, and
+> returns `None` otherwise. Absence of evidence for TDI yields no MBI rather
+> than a guessed `k_inact`.
+>
+> Real parameters from Sager 2014 are registered for fluoxetine and
+> norfluoxetine on CYP2C19 and CYP3A4. Enantiomer values are combined for a
+> racemate by a documented rule that reproduces both asymptotes of the summed
+> rate (`_racemic_tdi`), and is an approximation in between.
+>
+> `documented_tdi('paroxetine', 'CYP2D6')` correctly returns `None`. Paroxetine
+> very likely does have real CYP2D6 TDI, but it has not been sourced yet, so the
+> engine declines rather than inventing it. That is the intended behaviour and
+> it is a known coverage gap, not a claim that no such interaction exists.
+
+#### F-3 (original finding)
 
 **Code:** [`pk_simulator.py:308-310`](../backend/services/pk_simulator.py:308):
 ```python

@@ -13,16 +13,55 @@ import numpy as np
 import pytest
 
 from services.dose_scheduler import MedicationSchedule
-from services.enzyme_kinetics import CYP_KDEG, EnzymeParams, enzyme_pool_derivative
+from services.enzyme_kinetics import (
+    CYP_KDEG, EnzymeParams, InhibitorParams, enzyme_pool_derivative,
+)
+from services.metabolite_tracker import MetaboliteParams
 from services.pk_simulator import DrugConfig, SimulationConfig, run_simulation
 from services.provenance import REGISTRY, EvidenceClass, Parameter, assumption
 from services.sourced_params import (
     CLOZAPINE_CYP1A2_KM_MG_L,
     CLOZAPINE_FM_CYP1A2,
     CYP1A2_TURNOVER_HALFLIFE_H,
+    FLUOXETINE_CYP2D6_KI_MG_L,
+    NORFLUOXETINE_CYP2D6_KI_MG_L,
     SMOKING_CYP1A2_INDUCTION_RATIO,
+    _racemic_tdi,
+    documented_tdi,
     smoking_induction_term,
 )
+
+
+def _fluoxetine_aripiprazole_sim():
+    """Fluoxetine 20 mg daily for 28 days, stopped; aripiprazole 10 mg throughout."""
+    km, cl_ari = 0.5, 3.9
+    fluox = DrugConfig(
+        index=0, generic_name='fluoxetine', ka=0.7, bioavailability=0.72,
+        vd_l=2500.0, clearance_l_per_h=0.693 * 2500 / (4 * 24),
+        renal_clearance_fraction=0.05, enzyme_substrates=[],
+        enzyme_inhibitions=[InhibitorParams('CYP2D6', FLUOXETINE_CYP2D6_KI_MG_L.value, 0)],
+        metabolite=MetaboliteParams(
+            parent_drug_index=0, metabolite_name='norfluoxetine',
+            formation_fraction=0.8, ke_metabolite=0.693 / 240.0,
+            vd_metabolite_l=2500.0, is_enzyme_inhibitor=True,
+            inhibited_enzyme='CYP2D6', ki_nm=NORFLUOXETINE_CYP2D6_KI_MG_L.value),
+    )
+    arip = DrugConfig(
+        index=1, generic_name='aripiprazole', ka=1.0, bioavailability=0.87,
+        vd_l=300.0, clearance_l_per_h=cl_ari, renal_clearance_fraction=0.05,
+        enzyme_substrates=[EnzymeParams('CYP2D6', cl_ari * km, km, 0.35),
+                           EnzymeParams('CYP3A4', cl_ari * km, km, 0.60)],
+        enzyme_inhibitions=[], metabolite=None,
+    )
+    return run_simulation(SimulationConfig(
+        drugs=[fluox, arip], horizon_days=70,
+        schedules=[
+            MedicationSchedule(0, 'fluoxetine', 0.72, [
+                {'event_type': 'start', 'day': 0, 'dose_mg': 20, 'frequency': 'daily'},
+                {'event_type': 'stop', 'day': 28}]),
+            MedicationSchedule(1, 'aripiprazole', 0.87, [
+                {'event_type': 'start', 'day': 0, 'dose_mg': 10, 'frequency': 'daily'}]),
+        ]))
 
 # Flanagan 2024 (PMID 39173038): nonsmoker vs smoker plasma clozapine differed
 # by 34% to 76% across dose bands and sexes.
@@ -192,6 +231,86 @@ class TestProvenanceIntegrity:
         rng = np.random.default_rng(0)
         p = assumption(0.42, 'fraction', 'no interval reported', name='y')
         assert {p.sample(rng) for _ in range(20)} == {0.42}
+
+
+class TestMechanismCorrectness:
+    """Sager 2014 reports NO time-dependent inactivation of CYP2D6 by
+    fluoxetine or norfluoxetine. Persistent CYP2D6 inhibition after fluoxetine
+    is stopped must therefore emerge from norfluoxetine's long half-life
+    sustaining reversible inhibition, not from enzyme destruction.
+
+    These tests are a falsification check: they fail if the engine reverts to
+    inventing mechanism-based inactivation.
+    """
+
+    def test_no_time_dependent_inhibition_of_cyp2d6_by_fluoxetine(self):
+        assert documented_tdi('fluoxetine', 'CYP2D6') is None, (
+            'Sager 2014 reports reversible CYP2D6 inhibition only; TDI must not '
+            'be fabricated for this pair'
+        )
+
+    def test_documented_tdi_is_used_where_it_exists(self):
+        """CYP2C19 and CYP3A4 TDI by fluoxetine are reported and must be used."""
+        for enzyme in ('CYP2C19', 'CYP3A4'):
+            tdi = documented_tdi('fluoxetine', enzyme)
+            assert tdi is not None, f'fluoxetine {enzyme} TDI is documented'
+            k_i_conc, k_inact = tdi
+            assert k_i_conc > 0 and k_inact > 0
+
+    def test_undocumented_pairs_get_no_invented_tdi(self):
+        """Absence of evidence must yield None, never a guessed k_inact."""
+        for drug, enzyme in [('paroxetine', 'CYP2D6'), ('sertraline', 'CYP2D6'),
+                             ('made_up_drug', 'CYP3A4')]:
+            assert documented_tdi(drug, enzyme) is None
+
+    def test_racemic_tdi_reproduces_both_asymptotes(self):
+        ki_eff, kinact_eff = _racemic_tdi([(1.8, 1.02), (55.0, 3.3)])
+        assert kinact_eff == pytest.approx(1.02 + 3.3)
+        low_c_efficiency = kinact_eff / ki_eff
+        expected = 1.02 / (2 * 1.8) + 3.3 / (2 * 55.0)
+        assert low_c_efficiency == pytest.approx(expected)
+
+    def test_cyp2d6_inhibition_persists_after_fluoxetine_stops(self):
+        """The central claim of Demo 1, with MBI removed.
+
+        Substrate exposure must still be decaying slowly weeks after the parent
+        drug has effectively cleared, driven by the metabolite.
+        """
+        result = _fluoxetine_aripiprazole_sim()
+        t = result.time_hours
+
+        def window(arr, d0, d1):
+            m = (t >= d0 * 24) & (t < d1 * 24)
+            return float(np.mean(arr[m]))
+
+        fluox = window(result.concentrations['fluoxetine'], 42, 46)
+        norflux = window(result.metabolite_concentrations['norfluoxetine'], 42, 46)
+        on_treatment = window(result.concentrations['aripiprazole'], 24, 28)
+        two_weeks_after = window(result.concentrations['aripiprazole'], 42, 46)
+
+        assert norflux > 10 * fluox, (
+            'Norfluoxetine must outlast fluoxetine; got norfluoxetine='
+            f'{norflux:.2f}, fluoxetine={fluox:.2f} ng/mL'
+        )
+        assert two_weeks_after > 0.9 * on_treatment, (
+            'Aripiprazole exposure must remain near on-treatment levels two '
+            f'weeks after fluoxetine stops; got {two_weeks_after:.1f} vs '
+            f'{on_treatment:.1f} ng/mL'
+        )
+
+    def test_cyp2d6_enzyme_pool_is_not_depleted_by_fluoxetine(self):
+        """Reversible inhibition must not consume the enzyme pool.
+
+        This is the observable that distinguishes the two mechanisms: MBI
+        depletes the pool, competitive inhibition leaves it at baseline and
+        acts through apparent Km instead.
+        """
+        result = _fluoxetine_aripiprazole_sim()
+        pool = result.enzyme_activity['CYP2D6']
+        assert float(np.min(pool)) > 0.99, (
+            'CYP2D6 pool must stay at baseline under purely reversible '
+            f'inhibition; minimum was {float(np.min(pool)):.4f}'
+        )
 
 
 class TestUnitConsistency:

@@ -518,7 +518,11 @@ The Price of Anarchy (PoA) measures how much worse the competitive outcome is co
 
 **The problem:** Fluoxetine's metabolite (norfluoxetine, half-life 4 to 16 days) continues inhibiting CYP2D6 for weeks after discontinuation. During this window, aripiprazole levels remain elevated, increasing risk of akathisia and EPS. Premature venlafaxine initiation while fluoxetine levels remain significant creates serotonin toxicity risk.
 
-**NeuroTrace shows:** The concentration-time plot displays fluoxetine decay, norfluoxetine persistence, and aripiprazole elevation over 8 weeks. The enzyme activity sub-plot, now driven by the dynamic enzyme pool model, shows CYP2D6 activity recovering gradually over a degradation half-life of about 51 hours as norfluoxetine clears and the enzyme is resynthesized.
+**NeuroTrace shows:** The concentration-time plot displays fluoxetine decay, norfluoxetine persistence, and sustained aripiprazole elevation over 8 weeks. Aripiprazole tracks norfluoxetine rather than fluoxetine: two weeks after the last fluoxetine dose, when the parent drug is essentially gone, aripiprazole remains within a few percent of its on-treatment level.
+
+**Mechanism, and a correction.** Earlier versions attributed this to mechanism-based inactivation, showing the CYP2D6 enzyme pool dipping and then recovering. That was wrong. Sager et al. (2014) characterised both enantiomers of fluoxetine and norfluoxetine against CYP2D6, CYP2C19 and CYP3A4 and report time-dependent inactivation for **CYP2C19 and CYP3A4 only**. CYP2D6 inhibition is **purely reversible**.
+
+The persistence therefore comes from norfluoxetine's long half-life sustaining competitive inhibition, not from enzyme destruction requiring resynthesis. In the current model the CYP2D6 enzyme pool stays flat at baseline, and the interaction appears as an increased apparent Km in aripiprazole's elimination. The two mechanisms produce similar-looking curves, which is why the error was not obvious, but they diverge on rechallenge and when a competing substrate is added.
 
 **Clinical insight:** Safe to start venlafaxine approximately 5 weeks after last fluoxetine dose. Aripiprazole dose should remain reduced until norfluoxetine has cleared and the CYP2D6 pool has recovered.
 

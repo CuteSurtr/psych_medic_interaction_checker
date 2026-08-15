@@ -6,7 +6,7 @@ from typing import Any
 from services.enzyme_kinetics import CYP_KDEG, EnzymeParams, InhibitorParams, MBIParams, InductionParams, competitive_inhibition_rate, enzyme_activity_factor, enzyme_pool_derivative
 from services.dose_scheduler import DoseEvent, MedicationSchedule, build_dose_timeline
 from services.metabolite_tracker import MetaboliteParams, build_metabolite_ode_terms
-from services.sourced_params import smoking_induction_term
+from services.sourced_params import documented_tdi, smoking_induction_term
 CYP_ACTIVITY_MULTIPLIERS: dict[str, dict[str, float]] = {'CYP2D6': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP2C19': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP3A4': {'normal': 1.0}, 'CYP1A2': {'normal': 1.0}}
 
 @dataclass
@@ -307,10 +307,18 @@ def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d
                 inh_mw = _MW_APPROX.get(gn, 350.0)
                 ki_mg_l = float(cyp.ki_nm) * inh_mw / 1000000.0
                 enzyme_inhibitions.append(InhibitorParams(enzyme_name=cyp.enzyme, ki=ki_mg_l, drug_index=idx))
-                potency = (cyp.potency or 'moderate').lower()
-                if potency == 'strong':
-                    k_deg = CYP_KDEG.get(cyp.enzyme, 0.01)
-                    mbi_effects.append(MBIParams(enzyme_name=cyp.enzyme, k_inact=k_deg * 10, k_i_conc=ki_mg_l))
+                # Mechanism-based inactivation is applied ONLY where a source
+                # documents it. Previously any inhibitor tagged "strong" was
+                # given k_inact = 10 * k_deg with the competitive Ki reused as
+                # K_I, which invented enzyme destruction for interactions that
+                # are purely reversible. See AUDIT.md F-3 and F-24: Sager 2014
+                # reports no CYP2D6 TDI for fluoxetine or norfluoxetine, so the
+                # persistence of that interaction must emerge from
+                # norfluoxetine's half-life, not from enzyme inactivation.
+                tdi = documented_tdi(gn, cyp.enzyme)
+                if tdi is not None:
+                    k_i_conc, k_inact = tdi
+                    mbi_effects.append(MBIParams(enzyme_name=cyp.enzyme, k_inact=k_inact, k_i_conc=k_i_conc))
             elif cyp.role == 'inducer':
                 potency = (cyp.potency or 'moderate').lower()
                 e_max_map = {'strong': 2.0, 'moderate': 1.0, 'weak': 0.5}

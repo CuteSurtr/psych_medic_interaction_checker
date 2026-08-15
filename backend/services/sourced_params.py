@@ -407,6 +407,61 @@ SAGER_TDI_PARAMS: dict[str, dict[str, float]] = {
     },
 }
 
+def _racemic_tdi(enantiomers: list[tuple[float, float]]) -> tuple[float, float]:
+    """Combine enantiomer TDI parameters for a racemate modelled as one species.
+
+    Each enantiomer is present at half the total concentration, so:
+
+      saturation limit   kinact_eff = sum(kinact_e)
+      low-C efficiency   (kinact/KI)_eff = sum(kinact_e / (2 * KI_e))
+      hence              KI_eff = kinact_eff / (kinact/KI)_eff
+
+    Reproduces both asymptotes of the summed Michaelis-Menten-like rate. It is
+    an approximation in between, and is documented as such.
+
+    Args: list of (KI_uM, kinact_per_h) for each reported enantiomer.
+    """
+    kinact_eff = sum(k for _, k in enantiomers)
+    efficiency = sum(k / (2.0 * ki) for ki, k in enantiomers)
+    return kinact_eff / efficiency, kinact_eff
+
+
+def documented_tdi(drug: str, enzyme: str) -> tuple[float, float] | None:
+    """Return (KI in mg/L, kinact per hour) only where TDI is actually reported.
+
+    Returns None when no source documents time-dependent inactivation for this
+    drug/enzyme pair. Callers must NOT invent parameters in that case: absence
+    of evidence for TDI is evidence the interaction is reversible, which is a
+    different mechanism with different behaviour on rechallenge.
+    """
+    key = drug.strip().lower()
+    table = _TDI_BY_DRUG.get(key)
+    if table is None:
+        return None
+    entry = table.get(enzyme)
+    if entry is None:
+        return None
+    ki_um, kinact = _racemic_tdi(entry['enantiomers'])
+    return ki_um * entry['mw'] / 1000.0, kinact
+
+
+_TDI_BY_DRUG: dict[str, dict[str, dict]] = {
+    # Sager et al. 2014. CYP2D6 is deliberately absent: the paper reports
+    # reversible inhibition only for that enzyme.
+    'fluoxetine': {
+        'CYP2C19': {'mw': FLUOXETINE_MW_G_PER_MOL,
+                    'enantiomers': [(1.8, 1.02), (55.0, 3.3)]},
+        'CYP3A4': {'mw': FLUOXETINE_MW_G_PER_MOL,
+                   'enantiomers': [(21.0, 0.564)]},
+    },
+    'norfluoxetine': {
+        'CYP2C19': {'mw': NORFLUOXETINE_MW_G_PER_MOL,
+                    'enantiomers': [(15.0, 3.0), (7.0, 3.5)]},
+        'CYP3A4': {'mw': NORFLUOXETINE_MW_G_PER_MOL,
+                   'enantiomers': [(7.7, 0.66)]},
+    },
+}
+
 CYP2D6_HAS_TIME_DEPENDENT_INHIBITION = False
 """Sager 2014 reports no TDI of CYP2D6 by fluoxetine or norfluoxetine.
 
