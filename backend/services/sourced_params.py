@@ -285,6 +285,138 @@ CLOZAPINE_CYP1A2_KM_MG_L = REGISTRY.register(
     ),
 )
 
+# --------------------------------------------------------------------------
+# F-3 / F-4 / F-24: fluoxetine and norfluoxetine inhibition of CYP2D6
+#
+# Sager et al. 2014 characterised all four circulating species (both
+# enantiomers of parent and metabolite) against CYP2D6, CYP2C19 and CYP3A4,
+# and correlated in vitro parameters with observed in vivo AUC ratios.
+#
+# THE HEADLINE FINDING FOR NEUROTRACE: the paper reports time-dependent
+# inactivation for CYP2C19 and CYP3A4 ONLY. CYP2D6 inhibition by fluoxetine
+# and norfluoxetine is purely REVERSIBLE. The engine currently fabricates
+# CYP2D6 mechanism-based inactivation for any inhibitor tagged "strong", which
+# models a mechanism this interaction does not have. See AUDIT.md F-24.
+# --------------------------------------------------------------------------
+
+SAGER_2014 = Citation(
+    doi='10.1038/clpt.2014.50',
+    pmid='24569517',
+    title=('Fluoxetine- and norfluoxetine-mediated complex drug-drug interactions: '
+           'in vitro to in vivo correlation of effects on CYP2D6, CYP2C19, and CYP3A4'),
+    first_author='Sager JE',
+    journal='Clin Pharmacol Ther',
+    year=2014,
+    verified=True,
+)
+
+FLUOXETINE_MW_G_PER_MOL = 309.3
+NORFLUOXETINE_MW_G_PER_MOL = 295.3
+
+# Enantiomer-specific reversible Ki against CYP2D6, in uM, as printed.
+SAGER_CYP2D6_KI_UM: dict[str, float] = {
+    'R-fluoxetine': 0.86,
+    'S-fluoxetine': 0.068,
+    'R-norfluoxetine': 0.5,
+    'S-norfluoxetine': 0.035,
+}
+
+
+def _racemic_effective_ki_um(ki_s: float, ki_r: float, frac_s: float = 0.5) -> float:
+    """Composite Ki for a racemate modelled as one species.
+
+    Competitive inhibition sums as C/Ki, so the racemate's effective constant is
+    the fraction-weighted harmonic mean, not the arithmetic mean.
+    """
+    return 1.0 / (frac_s / ki_s + (1.0 - frac_s) / ki_r)
+
+
+_NORFLUOX_KI_UM = _racemic_effective_ki_um(
+    SAGER_CYP2D6_KI_UM['S-norfluoxetine'], SAGER_CYP2D6_KI_UM['R-norfluoxetine'])
+
+NORFLUOXETINE_CYP2D6_KI_MG_L = REGISTRY.register(
+    'NORFLUOXETINE_CYP2D6_KI_MG_L',
+    Parameter(
+        name='Norfluoxetine reversible Ki against CYP2D6 (racemic-effective)',
+        value=round(_NORFLUOX_KI_UM * NORFLUOXETINE_MW_G_PER_MOL / 1000.0, 6),
+        unit='mg/L',
+        ci_low=round(SAGER_CYP2D6_KI_UM['S-norfluoxetine'] * NORFLUOXETINE_MW_G_PER_MOL / 1000.0, 6),
+        ci_high=round(SAGER_CYP2D6_KI_UM['R-norfluoxetine'] * NORFLUOXETINE_MW_G_PER_MOL / 1000.0, 6),
+        distribution='lognormal',
+        evidence_class=EvidenceClass.LITERATURE_DERIVED,
+        evidence_type=EvidenceType.IN_VITRO,
+        citations=(SAGER_2014,),
+        population='human recombinant CYP / liver microsomes, enantiomer-resolved',
+        confidence=Confidence.HIGH,
+        notes=(
+            'Sager reports S-norfluoxetine 0.035 uM and R-norfluoxetine 0.5 uM. '
+            'Fluoxetine is dosed as a racemate and NeuroTrace models one species '
+            'per drug, so these are combined by fraction-weighted harmonic mean '
+            'to 0.0654 uM (65.4 nM). The bounds are the two enantiomer values, '
+            'which is a modelling range rather than a statistical CI. '
+            'Enantiomer-resolved modelling, which Sager shows is what actually '
+            'reproduces the in vivo data, would require splitting each species '
+            'into two compartments.'
+        ),
+    ),
+)
+
+FLUOXETINE_CYP2D6_KI_MG_L = REGISTRY.register(
+    'FLUOXETINE_CYP2D6_KI_MG_L',
+    Parameter(
+        name='Fluoxetine reversible Ki against CYP2D6 (racemic-effective)',
+        value=round(_racemic_effective_ki_um(
+            SAGER_CYP2D6_KI_UM['S-fluoxetine'],
+            SAGER_CYP2D6_KI_UM['R-fluoxetine']) * FLUOXETINE_MW_G_PER_MOL / 1000.0, 6),
+        unit='mg/L',
+        ci_low=round(SAGER_CYP2D6_KI_UM['S-fluoxetine'] * FLUOXETINE_MW_G_PER_MOL / 1000.0, 6),
+        ci_high=round(SAGER_CYP2D6_KI_UM['R-fluoxetine'] * FLUOXETINE_MW_G_PER_MOL / 1000.0, 6),
+        distribution='lognormal',
+        evidence_class=EvidenceClass.LITERATURE_DERIVED,
+        evidence_type=EvidenceType.IN_VITRO,
+        citations=(SAGER_2014,),
+        population='human recombinant CYP / liver microsomes, enantiomer-resolved',
+        confidence=Confidence.HIGH,
+        notes='S-fluoxetine 0.068 uM, R-fluoxetine 0.86 uM; combined to 0.126 uM.',
+    ),
+)
+
+# Observed in vivo AUC ratios after 2-week fluoxetine dosing. These are
+# validation targets, not model inputs. Note the CYP3A4 probes came in slightly
+# BELOW 1.0: time-dependent inhibition is offset by CYP3A4 induction, so a
+# model that only inhibits will get the direction wrong.
+SAGER_OBSERVED_AUC_RATIOS: dict[str, dict[str, float | str]] = {
+    'dextromethorphan': {'enzyme': 'CYP2D6', 'ratio': 27.0, 'low': 5.8, 'high': 160.0},
+    'omeprazole': {'enzyme': 'CYP2C19', 'ratio': 7.1, 'low': 4.4, 'high': 20.0},
+    'midazolam': {'enzyme': 'CYP3A4', 'ratio': 0.80},
+    'lovastatin': {'enzyme': 'CYP3A4', 'ratio': 0.94},
+}
+
+# Time-dependent inactivation, in uM and per hour, as printed. CYP2D6 is
+# absent from this table in the source; that absence is the finding.
+SAGER_TDI_PARAMS: dict[str, dict[str, float]] = {
+    'CYP2C19': {
+        'R-fluoxetine_KI_uM': 1.8, 'R-fluoxetine_kinact_per_h': 1.02,
+        'S-fluoxetine_KI_uM': 55.0, 'S-fluoxetine_kinact_per_h': 3.3,
+        'R-norfluoxetine_KI_uM': 15.0, 'R-norfluoxetine_kinact_per_h': 3.0,
+        'S-norfluoxetine_KI_uM': 7.0, 'S-norfluoxetine_kinact_per_h': 3.5,
+    },
+    'CYP3A4': {
+        'R-norfluoxetine_KI_uM': 7.7, 'R-norfluoxetine_kinact_per_h': 0.66,
+        'S-fluoxetine_KI_uM': 21.0, 'S-fluoxetine_kinact_per_h': 0.564,
+    },
+}
+
+CYP2D6_HAS_TIME_DEPENDENT_INHIBITION = False
+"""Sager 2014 reports no TDI of CYP2D6 by fluoxetine or norfluoxetine.
+
+Persistent CYP2D6 inhibition after fluoxetine is stopped is explained by
+norfluoxetine's long half-life sustaining REVERSIBLE inhibition, not by enzyme
+inactivation requiring resynthesis. Both mechanisms produce a similar-looking
+curve, which is why the engine's fabricated MBI was not obviously wrong.
+"""
+
+
 # fm_CYP1A2 for clozapine remains UNSOURCED and is flagged, not fixed.
 #
 # Olesen & Linnet 2001 measured CYP1A2 at 30% of N-demethylation at a

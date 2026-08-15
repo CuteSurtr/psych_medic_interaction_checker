@@ -126,7 +126,62 @@ MBI is the mechanism underpinning flagship Demo 1.
 
 ---
 
-#### F-4. Norfluoxetine Ki: three-way contradiction
+#### F-24. The engine models CYP2D6 inhibition with a mechanism the literature does not report
+
+Sager et al. (2014) characterised all four circulating species against three
+enzymes and reports time-dependent inactivation for **CYP2C19 and CYP3A4 only**.
+CYP2D6 inhibition by fluoxetine and norfluoxetine is **purely reversible**.
+
+The engine adds mechanism-based inactivation to any inhibitor tagged `strong`
+([`pk_simulator.py:308`](../backend/services/pk_simulator.py:308)), so fluoxetine
+gets fabricated CYP2D6 MBI. The clinical observable is reproduced for the wrong
+reason: persistent CYP2D6 inhibition after fluoxetine stops is caused by
+norfluoxetine's long half-life sustaining *reversible* inhibition, not by enzyme
+inactivation requiring resynthesis.
+
+Both mechanisms produce a similar decay curve, which is why this was not
+obviously wrong. They diverge under conditions the demo will eventually explore:
+adding a competing substrate, or restarting the drug, behaves differently under
+reversible inhibition than under enzyme destruction.
+
+The paper also supplies a **negative control the current engine would likely
+fail**. Observed AUC ratios after two weeks of fluoxetine:
+
+| Probe | Enzyme | Observed AUC ratio |
+|---|---|---|
+| Dextromethorphan | CYP2D6 | 27 (5.8-160) |
+| Omeprazole | CYP2C19 | 7.1 (4.4-20) |
+| Midazolam | CYP3A4 | **0.80** |
+| Lovastatin | CYP3A4 | **0.94** |
+
+CYP3A4 exposure went *down slightly*, because time-dependent inhibition is
+offset by CYP3A4 induction (Emax 2.8 for S-fluoxetine). A model that only
+inhibits CYP3A4 gets the direction wrong. Sager's own dynamic models predicted
+all four within twofold, which is a literature-derived acceptance threshold for
+this scenario rather than an invented one.
+
+Real TDI and induction parameters are now recorded in
+`services/sourced_params.py` (`SAGER_TDI_PARAMS`, `SAGER_OBSERVED_AUC_RATIOS`).
+
+#### F-4. Norfluoxetine Ki: three-way contradiction  `PARTIALLY CORRECTED`
+
+> **Correction.** This finding's central claim was wrong and is withdrawn.
+>
+> It asserted the code's 70 nM "has the signature of a transcription error in
+> which the parent drug's constant was entered for the metabolite", because
+> 70 is close to S-fluoxetine's 68 nM. Working from the primary source:
+> S-norfluoxetine Ki is 0.035 uM and R-norfluoxetine is 0.5 uM, and fluoxetine
+> is dosed as a **racemate**. Combining the enantiomers by fraction-weighted
+> harmonic mean, which is how competitive inhibition actually sums, gives a
+> racemic-effective Ki of **65.4 nM**.
+>
+> So 70 nM is defensible for the right reason, and the transcription-error
+> hypothesis is unsupported. The real defect is narrower: the value was
+> undocumented, unsourced, and buried in a function-local dict, so it was
+> indistinguishable from a guess. Now registered as
+> `NORFLUOXETINE_CYP2D6_KI_MG_L` with the enantiomer values as bounds.
+>
+> The README's 17 nM still matches nothing and remains unexplained.
 
 | Source | CYP2D6 Ki |
 |---|---|
