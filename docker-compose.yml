@@ -1,12 +1,15 @@
+# Local development only. The database port is published on 127.0.0.1 so it is
+# not reachable from the network. Set POSTGRES_PASSWORD in a .env file (which is
+# gitignored) to override the development default.
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: neurotrace
-      POSTGRES_PASSWORD: neurotrace_secret
-      POSTGRES_DB: neurotrace
+      POSTGRES_USER: ${POSTGRES_USER:-neurotrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devonly_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-neurotrace}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,9 +23,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgresql://neurotrace:neurotrace_secret@db:5432/neurotrace
+      DATABASE_URL: postgresql://${POSTGRES_USER:-neurotrace}:${POSTGRES_PASSWORD:-devonly_change_me}@db:5432/${POSTGRES_DB:-neurotrace}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy

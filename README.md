@@ -596,12 +596,19 @@ no environment variables, and no external services.
 vercel deploy
 ```
 
-| Service | URL |
-|---------|-----|
-| App | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/ |
-| API (Swagger) | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/docs |
-| API (ReDoc) | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/redoc |
-| Deploy health check | https://psych-medic-interaction-checker-git-main-cutesurtrs-projects.vercel.app/api/__status |
+Vercel assigns each deployment a URL that embeds the account or team slug and
+the branch name. Those are unstable and identify the deploying account, so the
+canonical production domain is used here instead. Substitute your own domain
+when self-hosting.
+
+| Service | Path |
+|---------|------|
+| App | `/` |
+| API (Swagger) | `/docs` |
+| API (ReDoc) | `/redoc` |
+| Deploy health check | `/api/__status` |
+
+Live deployment: <https://psych-medic-interaction-checker.vercel.app/>
 
 `vercel.json` wires it up:
 
@@ -631,6 +638,15 @@ on state written by a previous one:
 `GET /api/__status` reports whether seeding succeeded, the Python version, and
 the number of registered routes. It is the fastest way to confirm a deploy is
 healthy.
+
+> **Exposure note.** On a public deployment this endpoint discloses the Python
+> runtime version and route count, and `/docs` and `/redoc` publish the full API
+> surface. That is intentional for an open educational project, but if you
+> deploy your own instance for anything less open, gate `/api/__status` behind a
+> token and disable the interactive docs by passing `docs_url=None,
+> redoc_url=None` to `FastAPI()`. Nothing here returns patient data: the API is
+> stateless by default and the seeded database holds only published reference
+> pharmacology.
 
 ### Keep the `app` binding at the top level
 
@@ -678,7 +694,14 @@ docker compose up --build
 |---------|-----|
 | Frontend | http://localhost:5173 |
 | API (Swagger) | http://localhost:8000/docs |
-| PostgreSQL | localhost:5433 (user: `neurotrace`, db: `neurotrace`) |
+| PostgreSQL | 127.0.0.1:5433 (user: `neurotrace`, db: `neurotrace`) |
+
+All three ports bind to `127.0.0.1` rather than `0.0.0.0`, so nothing is exposed
+to the local network. The development database password defaults to a
+placeholder; override `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` in
+a `.env` file (already gitignored) if you want something else. These are local
+development credentials only and are not used by the Vercel deployment, which
+runs on in-memory SQLite unless `DATABASE_URL` is set.
 
 Docker Compose keeps the three-service split, with Nginx serving the SPA and
 Postgres for durable storage. The Vercel deployment differs: there the single
