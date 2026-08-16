@@ -364,7 +364,59 @@ The FDA Pregnancy and Lactation Labeling Rule removed pregnancy letter categorie
 
 ### LOW: robustness and numerics
 
-#### F-18. Silent fallbacks manufacture plausible-looking drugs
+#### F-25. PK coverage is roughly a third of what the README claims
+
+Measured while resolving F-18, by building a config for all 115 medications and
+counting which needed a fabricated value:
+
+| | |
+|---|---|
+| Router `_has_pk_parameters()` reports usable | **50 of 115** |
+| Engine needs no fabricated default | **17 of 115** |
+| Molecular weight missing | **79** (only 36 tabulated) |
+| Volume of distribution missing | 65 |
+| Absorption rate constant missing | 65 |
+| Bioavailability missing | 65 |
+| Clearance legitimately derived from ln2*Vd/t-half | 64 |
+
+The README states "50 of the 115 medications carry full PK parameters". That
+figure comes from the router's check, which tests clearance, volume and
+absorption rate but **not molecular weight**. The engine needs molecular weight
+for every uM to mg/L conversion of `Ki` and `Km`, so 79 medications have their
+interaction magnitudes computed against a guessed 350 g/mol.
+
+Molecular weight is the worst of these because it is not an uncertain
+pharmacokinetic quantity that varies between populations. It is a fixed chemical
+constant, available for every one of these compounds, and guessing it is
+indefensible in a way that guessing a volume of distribution is not. Filling in
+the remaining 79 is the cheapest high-value data fix available and would move
+the honest count from 17 towards 50.
+
+README corrected to state the measured figure.
+
+#### F-18. Silent fallbacks manufacture plausible-looking drugs  `RESOLVED 2026-08-15`
+
+> **Resolution.** Every fallback now goes through `_resolve()`, which records a
+> `ParameterSubstitution` carrying the drug, parameter, substituted value, unit
+> and reason. Records travel on `SimulationConfig` to `SimulationResult` and are
+> serialised into the API response as `parameter_substitutions` alongside a
+> `has_substituted_parameters` flag, so a caller can tell how much of a curve
+> rests on measured data.
+>
+> `build_drug_configs_from_db(..., strict=True)` raises `MissingParameterError`
+> rather than substituting, for callers that would rather fail than guess.
+>
+> Legitimate derivations are distinguished from invented values: clearance
+> computed as `ln2 * Vd / t-half` is marked `derived=True` and does not count
+> as fabrication. Only `has_substituted_parameters` (non-derived) trips the flag.
+>
+> The metabolite volume-of-distribution assumption (F-7) is now recorded rather
+> than applied silently, and the norfluoxetine `Ki` uses the sourced Sager value.
+>
+> **Not yet done:** the UI does not surface the flag. The data is in the API
+> response; nothing displays it.
+
+#### F-18 (original finding)
 
 [`pk_simulator.py:291, 326-328`](../backend/services/pk_simulator.py:291): `clearance or 5.0`, `vd or 100.0`, `ka or 0.5`, `bioavailability or 0.5`, `formation_fraction or 0.5`, molecular weight default `350.0`.
 

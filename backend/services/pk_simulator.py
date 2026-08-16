@@ -6,7 +6,7 @@ from typing import Any
 from services.enzyme_kinetics import CYP_KDEG, EnzymeParams, InhibitorParams, MBIParams, InductionParams, competitive_inhibition_rate, enzyme_activity_factor, enzyme_pool_derivative
 from services.dose_scheduler import DoseEvent, MedicationSchedule, build_dose_timeline
 from services.metabolite_tracker import MetaboliteParams, build_metabolite_ode_terms
-from services.sourced_params import documented_tdi, smoking_induction_term
+from services.sourced_params import NORFLUOXETINE_CYP2D6_KI_MG_L, documented_tdi, smoking_induction_term
 CYP_ACTIVITY_MULTIPLIERS: dict[str, dict[str, float]] = {'CYP2D6': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP2C19': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP3A4': {'normal': 1.0}, 'CYP1A2': {'normal': 1.0}}
 
 @dataclass
@@ -32,6 +32,60 @@ class DrugConfig:
         return self.peripheral_vd_l is not None and self.k12_per_h is not None and (self.k21_per_h is not None)
 REFERENCE_WEIGHT_KG = 70.0
 
+
+@dataclass(frozen=True)
+class ParameterSubstitution:
+    """Record of a parameter the database did not supply.
+
+    Audit finding F-18: the engine used to fall back to plausible-looking
+    defaults (CL 5.0 L/h, Vd 100 L, ka 0.5/h, F 0.5, MW 350) whenever a value
+    was missing, so a medication with no PK data at all produced a confident
+    concentration curve indistinguishable from a well-characterised drug.
+
+    Substitutions are now recorded and travel with the simulation result, so a
+    caller can tell how much of a curve rests on real data. `derived` marks a
+    legitimate computation from other measured values, such as CL from
+    half-life and volume, as opposed to an invented default.
+    """
+
+    drug: str
+    parameter: str
+    value: float
+    unit: str
+    reason: str
+    derived: bool = False
+
+    def describe(self) -> str:
+        kind = 'derived' if self.derived else 'SUBSTITUTED DEFAULT'
+        return (f'{self.drug}: {self.parameter} = {self.value} {self.unit} '
+                f'[{kind}] {self.reason}')
+
+
+class MissingParameterError(ValueError):
+    """Raised in strict mode when a clinically important parameter is absent."""
+
+
+def _resolve(value: Any, *, drug: str, parameter: str, unit: str, default: float,
+             reason: str, log: list[ParameterSubstitution], strict: bool,
+             derived: bool = False) -> float:
+    """Use the database value, or record that a default was substituted."""
+    if value is not None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        if numeric > 0.0:
+            return numeric
+    if strict and not derived:
+        raise MissingParameterError(
+            f'{drug}: {parameter} is not available and strict mode is enabled. '
+            f'This medication cannot drive the compartmental model. See '
+            f'/api/medications/pk-complete for medications that can.'
+        )
+    log.append(ParameterSubstitution(drug=drug, parameter=parameter, value=default,
+                                     unit=unit, reason=reason, derived=derived))
+    return default
+
 @dataclass
 class SimulationConfig:
     drugs: list[DrugConfig]
@@ -41,6 +95,7 @@ class SimulationConfig:
     cyp2c19_phenotype: str = 'normal'
     smoking: bool = False
     patient_weight_kg: float = 70.0
+    parameter_substitutions: list[ParameterSubstitution] = field(default_factory=list)
 
 @dataclass
 class SimulationResult:
@@ -51,6 +106,12 @@ class SimulationResult:
     enzyme_activity: dict[str, np.ndarray]
     steady_state_info: list[dict]
     peripheral_concentrations: dict[str, np.ndarray] = field(default_factory=dict)
+    parameter_substitutions: list[ParameterSubstitution] = field(default_factory=list)
+
+    @property
+    def has_substituted_parameters(self) -> bool:
+        """True if any curve here rests on a fabricated default."""
+        return any(not s.derived for s in self.parameter_substitutions)
 
 def _build_cyp_multipliers(config: SimulationConfig) -> dict[str, float]:
     multipliers: dict[str, float] = {}
@@ -211,7 +272,7 @@ def run_simulation(config: SimulationConfig) -> SimulationResult:
         scaled_drugs: list[DrugConfig] = []
         for drug in config.drugs:
             scaled_drugs.append(DrugConfig(index=drug.index, generic_name=drug.generic_name, ka=drug.ka, bioavailability=drug.bioavailability, vd_l=drug.vd_l * weight_factor, clearance_l_per_h=drug.clearance_l_per_h * weight_factor, renal_clearance_fraction=drug.renal_clearance_fraction, enzyme_substrates=drug.enzyme_substrates, enzyme_inhibitions=drug.enzyme_inhibitions, metabolite=drug.metabolite, mbi_effects=drug.mbi_effects, induction_effects=drug.induction_effects, peripheral_vd_l=drug.peripheral_vd_l * weight_factor if drug.peripheral_vd_l is not None else None, k12_per_h=drug.k12_per_h, k21_per_h=drug.k21_per_h))
-        config = SimulationConfig(drugs=scaled_drugs, schedules=config.schedules, horizon_days=config.horizon_days, cyp2d6_phenotype=config.cyp2d6_phenotype, cyp2c19_phenotype=config.cyp2c19_phenotype, smoking=config.smoking, patient_weight_kg=config.patient_weight_kg)
+        config = SimulationConfig(drugs=scaled_drugs, schedules=config.schedules, horizon_days=config.horizon_days, cyp2d6_phenotype=config.cyp2d6_phenotype, cyp2c19_phenotype=config.cyp2c19_phenotype, smoking=config.smoking, patient_weight_kg=config.patient_weight_kg, parameter_substitutions=config.parameter_substitutions)
     n_drugs = len(config.drugs)
     metabolites = [d.metabolite for d in config.drugs if d.metabolite is not None]
     n_met = len(metabolites)
@@ -277,12 +338,23 @@ def run_simulation(config: SimulationConfig) -> SimulationResult:
     enzyme_activity = _extract_enzyme_activity(y_full, n_drugs, n_met, enzyme_names)
     steady_state_info = _compute_steady_state_info(time_hours, concentrations, config)
     dose_event_dicts = [{'time_h': de.time_h, 'dose_mg': de.dose_mg, 'drug_name': config.drugs[de.medication_index].generic_name} for de in dose_events]
-    return SimulationResult(time_hours=time_hours, concentrations=concentrations, metabolite_concentrations=metabolite_concentrations, dose_events=dose_event_dicts, enzyme_activity=enzyme_activity, steady_state_info=steady_state_info, peripheral_concentrations=peripheral_concentrations)
+    return SimulationResult(time_hours=time_hours, concentrations=concentrations, metabolite_concentrations=metabolite_concentrations, dose_events=dose_event_dicts, enzyme_activity=enzyme_activity, steady_state_info=steady_state_info, peripheral_concentrations=peripheral_concentrations, parameter_substitutions=list(config.parameter_substitutions))
 _MW_APPROX: dict[str, float] = {'fluoxetine': 309.3, 'sertraline': 306.2, 'paroxetine': 329.4, 'citalopram': 324.4, 'escitalopram': 324.4, 'fluvoxamine': 318.3, 'venlafaxine': 277.4, 'duloxetine': 297.4, 'desvenlafaxine': 263.4, 'amitriptyline': 277.4, 'nortriptyline': 263.4, 'clomipramine': 314.9, 'aripiprazole': 448.4, 'quetiapine': 383.5, 'olanzapine': 312.4, 'risperidone': 410.5, 'ziprasidone': 412.9, 'clozapine': 326.8, 'lurasidone': 492.7, 'paliperidone': 426.5, 'haloperidol': 375.9, 'chlorpromazine': 318.9, 'carbamazepine': 236.3, 'lamotrigine': 256.1, 'valproic acid': 144.2, 'bupropion': 239.7, 'trazodone': 371.9, 'mirtazapine': 265.4, 'buspirone': 385.5, 'alprazolam': 308.8, 'diazepam': 284.7, 'methadone': 309.4, 'tramadol': 263.4, 'propranolol': 259.3, 'donepezil': 379.5, 'buprenorphine': 467.6}
 
-def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d6_phenotype: str='normal', cyp2c19_phenotype: str='normal') -> list[DrugConfig]:
+def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d6_phenotype: str='normal', cyp2c19_phenotype: str='normal', strict: bool=False, substitutions: list[ParameterSubstitution] | None=None) -> list[DrugConfig]:
+    """Build simulator configs from database rows.
+
+    Args:
+        strict: raise MissingParameterError rather than substituting a default
+            for a parameter the database does not supply. Derived values, such
+            as clearance computed from half-life and volume, are still allowed.
+        substitutions: list to append substitution records to. Callers that want
+            to surface data-completeness to the user should pass one in.
+    """
     from models import CYP450Profile, Medication
     from services.metabolite_tracker import MetaboliteParams
+    if substitutions is None:
+        substitutions = []
     configs: list[DrugConfig] = []
     meds = db_session.query(Medication).filter(Medication.id.in_(medication_ids)).all()
     med_by_id = {m.id: m for m in meds}
@@ -291,8 +363,36 @@ def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d
         if med is None:
             raise ValueError(f'Medication id={med_id} not found')
         gn = (med.generic_name or '').lower()
-        cl = float(med.clearance_l_per_h or (med.half_life_hours and 0.693 * float(med.volume_of_distribution_l or 100.0) / float(med.half_life_hours)) or 5.0)
-        mw = _MW_APPROX.get(gn, 350.0)
+        name = med.generic_name or f'medication_{med_id}'
+
+        vd = _resolve(med.volume_of_distribution_l, drug=name,
+                      parameter='volume_of_distribution_l', unit='L', default=100.0,
+                      reason='no published volume of distribution in the database',
+                      log=substitutions, strict=strict)
+
+        # Clearance: measured if present, otherwise derived from half-life and
+        # volume (CL = ln2 * Vd / t-half), which is a legitimate computation
+        # rather than an invented value. Only the final fallback is fabricated.
+        if med.clearance_l_per_h:
+            cl = float(med.clearance_l_per_h)
+        elif med.half_life_hours:
+            cl = 0.693 * vd / float(med.half_life_hours)
+            substitutions.append(ParameterSubstitution(
+                drug=name, parameter='clearance_l_per_h', value=round(cl, 4),
+                unit='L/h', derived=True,
+                reason='computed as ln2 * Vd / half-life; no measured clearance'))
+        else:
+            cl = _resolve(None, drug=name, parameter='clearance_l_per_h', unit='L/h',
+                          default=5.0, reason='no clearance and no half-life to derive it from',
+                          log=substitutions, strict=strict)
+
+        if gn in _MW_APPROX:
+            mw = _MW_APPROX[gn]
+        else:
+            mw = _resolve(None, drug=name, parameter='molecular_weight', unit='g/mol',
+                          default=350.0,
+                          reason='molecular weight not tabulated; affects every uM to mg/L conversion',
+                          log=substitutions, strict=strict)
         cyp_profiles = db_session.query(CYP450Profile).filter(CYP450Profile.medication_id == med_id).all()
         enzyme_substrates: list[EnzymeParams] = []
         enzyme_inhibitions: list[InhibitorParams] = []
@@ -325,18 +425,45 @@ def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d
                 induction_effects.append(InductionParams(enzyme_name=cyp.enzyme, e_max=e_max_map.get(potency, 1.0), ec50=ki_mg_l if cyp.ki_nm else 0.5))
         metabolite = None
         if med.has_active_metabolite and med.metabolite_name and med.metabolite_half_life_hours:
-            _METABOLITE_INHIBITORS: dict[str, tuple[str, float]] = {'fluoxetine': ('CYP2D6', 70.0), 'venlafaxine': ('CYP2D6', 1400.0)}
             is_inhibitor = False
             inhibited_enzyme = None
             met_ki = None
-            if gn in _METABOLITE_INHIBITORS:
-                inhibited_enzyme, ki_nm_val = _METABOLITE_INHIBITORS[gn]
-                is_inhibitor = True
-                met_ki = ki_nm_val * mw / 1000000.0
-            metabolite = MetaboliteParams(parent_drug_index=idx, metabolite_name=med.metabolite_name, formation_fraction=float(med.metabolite_formation_fraction or 0.5), ke_metabolite=0.693 / float(med.metabolite_half_life_hours), vd_metabolite_l=float(med.volume_of_distribution_l or 100.0), is_enzyme_inhibitor=is_inhibitor, inhibited_enzyme=inhibited_enzyme, ki_nm=met_ki)
-        ka = float(med.absorption_rate_constant or 0.5)
-        vd = float(med.volume_of_distribution_l or 100.0)
-        f = float(med.bioavailability or 0.5)
+            if gn == 'fluoxetine':
+                # Sourced: Sager 2014, racemic-effective from the enantiomer values.
+                inhibited_enzyme, is_inhibitor = 'CYP2D6', True
+                met_ki = NORFLUOXETINE_CYP2D6_KI_MG_L.value
+            elif gn == 'venlafaxine':
+                inhibited_enzyme, is_inhibitor = 'CYP2D6', True
+                met_ki = 1400.0 * mw / 1000000.0
+                substitutions.append(ParameterSubstitution(
+                    drug=name, parameter='metabolite_cyp2d6_ki', value=1400.0,
+                    unit='nM',
+                    reason='desvenlafaxine CYP2D6 Ki is not sourced; carried from seed data'))
+
+            formation = _resolve(
+                med.metabolite_formation_fraction, drug=name,
+                parameter='metabolite_formation_fraction', unit='fraction', default=0.5,
+                reason='no measured formation fraction for the active metabolite',
+                log=substitutions, strict=strict)
+
+            # Audit F-7: the metabolite inherits the parent's volume of
+            # distribution. This directly scales the metabolite concentration
+            # that feeds back into enzyme inhibition, so it is recorded rather
+            # than assumed silently.
+            substitutions.append(ParameterSubstitution(
+                drug=name, parameter=f'{med.metabolite_name}_volume_of_distribution',
+                value=round(vd, 2), unit='L',
+                reason='metabolite volume of distribution assumed equal to the parent'))
+
+            metabolite = MetaboliteParams(parent_drug_index=idx, metabolite_name=med.metabolite_name, formation_fraction=formation, ke_metabolite=0.693 / float(med.metabolite_half_life_hours), vd_metabolite_l=vd, is_enzyme_inhibitor=is_inhibitor, inhibited_enzyme=inhibited_enzyme, ki_nm=met_ki)
+        ka = _resolve(med.absorption_rate_constant, drug=name,
+                      parameter='absorption_rate_constant', unit='1/h', default=0.5,
+                      reason='no absorption rate constant; tmax would be needed to derive one',
+                      log=substitutions, strict=strict)
+        f = _resolve(med.bioavailability, drug=name, parameter='bioavailability',
+                     unit='fraction', default=0.5,
+                     reason='no published oral bioavailability in the database',
+                     log=substitutions, strict=strict)
         _RENAL_OVERRIDES: dict[str, float] = {'lithium': 1.0, 'gabapentin': 0.75, 'pregabalin': 0.9, 'memantine': 0.7, 'paliperidone': 0.6, 'desvenlafaxine': 0.45, 'topiramate': 0.7, 'amisulpride': 0.5}
         if gn in _RENAL_OVERRIDES:
             renal_frac = _RENAL_OVERRIDES[gn]

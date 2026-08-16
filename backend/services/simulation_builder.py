@@ -48,7 +48,8 @@ def build_config_from_dose_events(
     if missing:
         raise ValueError(f"unknown medication ids: {missing}")
 
-    drug_configs = build_drug_configs_from_db(db, med_ids)
+    substitutions: list = []
+    drug_configs = build_drug_configs_from_db(db, med_ids, substitutions=substitutions)
 
     events_by_med: dict[int, list[dict]] = {}
     for e in sorted(events, key=lambda x: int(x["event_day"])):
@@ -93,6 +94,7 @@ def build_config_from_dose_events(
         cyp2c19_phenotype=cyp2c19_phenotype or "normal",
         smoking=bool(smoking),
         patient_weight_kg=float(patient_weight_kg or 70),
+        parameter_substitutions=substitutions,
     )
 
 
@@ -107,4 +109,20 @@ def serialize_result(result) -> dict[str, Any]:
         "dose_events": result.dose_events,
         "enzyme_activity": {k: v.tolist() for k, v in result.enzyme_activity.items()},
         "steady_state_info": result.steady_state_info,
+        # Audit F-18. Callers must be able to tell how much of these curves
+        # rests on measured data rather than substituted defaults.
+        "parameter_substitutions": [
+            {
+                "drug": s.drug,
+                "parameter": s.parameter,
+                "value": s.value,
+                "unit": s.unit,
+                "reason": s.reason,
+                "derived": s.derived,
+            }
+            for s in getattr(result, "parameter_substitutions", [])
+        ],
+        "has_substituted_parameters": getattr(
+            result, "has_substituted_parameters", False
+        ),
     }

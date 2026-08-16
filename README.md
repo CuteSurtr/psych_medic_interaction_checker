@@ -587,7 +587,11 @@ start.
 
 Each parameter is annotated with its source in the seed data files (`backend/database/seed_data.py`).
 
-**Coverage boundary.** 50 of the 115 medications carry full PK parameters (`CL`, `Vd`, `ka`); the remaining 65 have interaction, CYP450 and half-life data only. Those entries are complete for the interaction and risk analyses, which is what they are used for, but cannot drive the compartmental model. Half-life = ln 2 · `Vd`/`CL` is one equation in two unknowns, and `ka` additionally needs `tmax`, so the missing parameters are not recoverable from what is present. Rather than invent values, `/api/medications/pk-complete` reports which medications support the PK-model analyses, the search response carries a `has_pk_parameters` flag, and the Design and Diagnostics panels select a usable medication themselves.
+**Coverage boundary.** 50 of the 115 medications carry `CL`, `Vd` and `ka`, which is what `/api/medications/pk-complete` reports. But only **17 of 115** can be simulated without the engine substituting at least one value it does not have: molecular weight is missing for 79 medications, and it is needed for every conversion of `Ki` and `Km` from µM to mg/L. Simulations for the rest are computed against a guessed 350 g/mol.
+
+Every such substitution is now recorded and returned with the simulation as `parameter_substitutions`, with a `has_substituted_parameters` flag, so a curve built on defaults is distinguishable from one built on measured data. Passing `strict=True` refuses to substitute at all. Filling in the 79 missing molecular weights is the cheapest way to improve this, since molecular weight is a fixed chemical constant rather than an uncertain pharmacokinetic quantity.
+
+The remaining 65 medications have interaction, CYP450 and half-life data only. Those entries are complete for the interaction and risk analyses, which is what they are used for, but cannot drive the compartmental model. Half-life = ln 2 · `Vd`/`CL` is one equation in two unknowns, and `ka` additionally needs `tmax`, so the missing parameters are not recoverable from what is present. Rather than invent values, `/api/medications/pk-complete` reports which medications support the PK-model analyses, the search response carries a `has_pk_parameters` flag, and the Design and Diagnostics panels select a usable medication themselves.
 
 ---
 

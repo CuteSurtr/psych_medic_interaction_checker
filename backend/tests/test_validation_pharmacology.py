@@ -313,6 +313,110 @@ class TestMechanismCorrectness:
         )
 
 
+class TestParameterSubstitutionVisibility:
+    """Audit F-18: a curve built on defaults must not look like a curve built
+    on measured data."""
+
+    @pytest.fixture(scope='class')
+    def db(self):
+        from database.connection import SessionLocal
+        from database.seed_db import create_tables, seed_if_empty
+        create_tables()
+        seed_if_empty()
+        session = SessionLocal()
+        yield session
+        session.close()
+
+    def _med(self, db, name):
+        from models import Medication
+        return db.query(Medication).filter(Medication.generic_name == name).first()
+
+    def test_substitutions_are_recorded_not_silent(self, db):
+        from services.pk_simulator import build_drug_configs_from_db
+        med = self._med(db, 'acamprosate')
+        if med is None:
+            pytest.skip('acamprosate not seeded')
+        subs = []
+        build_drug_configs_from_db(db, [med.id], substitutions=subs)
+        fabricated = [s for s in subs if not s.derived]
+        assert fabricated, (
+            'acamprosate lacks PK parameters, so building a config for it must '
+            'record substitutions rather than silently inventing them'
+        )
+        assert all(s.reason for s in fabricated), 'every substitution needs a reason'
+
+    def test_strict_mode_refuses_to_invent(self, db):
+        from services.pk_simulator import MissingParameterError, build_drug_configs_from_db
+        med = self._med(db, 'acamprosate')
+        if med is None:
+            pytest.skip('acamprosate not seeded')
+        with pytest.raises(MissingParameterError, match='strict mode'):
+            build_drug_configs_from_db(db, [med.id], strict=True)
+
+    def test_derived_values_are_distinguished_from_invented_ones(self, db):
+        """CL from ln2*Vd/t-half is a computation, not a fabrication."""
+        from services.pk_simulator import build_drug_configs_from_db
+        med = self._med(db, 'sertraline')
+        if med is None:
+            pytest.skip('sertraline not seeded')
+        subs = []
+        build_drug_configs_from_db(db, [med.id], substitutions=subs)
+        derived = [s for s in subs if s.derived]
+        for s in derived:
+            assert 'computed' in s.reason or 'derived' in s.reason
+
+    def test_well_characterised_drug_needs_no_fabrication(self, db):
+        from services.pk_simulator import build_drug_configs_from_db
+        med = self._med(db, 'clozapine')
+        if med is None:
+            pytest.skip('clozapine not seeded')
+        subs = []
+        build_drug_configs_from_db(db, [med.id], substitutions=subs)
+        core = {'volume_of_distribution_l', 'bioavailability',
+                'absorption_rate_constant', 'molecular_weight'}
+        fabricated = {s.parameter for s in subs if not s.derived}
+        assert not (core & fabricated), (
+            f'clozapine should be fully specified; fabricated: {core & fabricated}'
+        )
+
+    def test_result_carries_substitutions_to_the_caller(self, db):
+        from services.pk_simulator import (
+            ParameterSubstitution, SimulationConfig, build_drug_configs_from_db,
+            run_simulation,
+        )
+        med = self._med(db, 'clozapine')
+        if med is None:
+            pytest.skip('clozapine not seeded')
+        subs: list[ParameterSubstitution] = []
+        drugs = build_drug_configs_from_db(db, [med.id], substitutions=subs)
+        subs.append(ParameterSubstitution(
+            drug='clozapine', parameter='test_param', value=1.0, unit='x',
+            reason='injected by test'))
+        result = run_simulation(SimulationConfig(
+            drugs=drugs, horizon_days=7,
+            schedules=[MedicationSchedule(
+                drugs[0].index, med.generic_name, drugs[0].bioavailability,
+                [{'event_type': 'start', 'day': 0, 'dose_mg': 100,
+                  'frequency': 'BID'}])],
+            parameter_substitutions=subs))
+        assert result.has_substituted_parameters
+        assert any(s.parameter == 'test_param' for s in result.parameter_substitutions)
+
+    def test_serialised_result_exposes_substitutions(self):
+        from services.pk_simulator import ParameterSubstitution, SimulationResult
+        from services.simulation_builder import serialize_result
+        result = SimulationResult(
+            time_hours=np.array([0.0]), concentrations={}, metabolite_concentrations={},
+            dose_events=[], enzyme_activity={}, steady_state_info=[],
+            parameter_substitutions=[ParameterSubstitution(
+                drug='x', parameter='bioavailability', value=0.5, unit='fraction',
+                reason='not in database')])
+        payload = serialize_result(result)
+        assert payload['has_substituted_parameters'] is True
+        assert payload['parameter_substitutions'][0]['parameter'] == 'bioavailability'
+        assert payload['parameter_substitutions'][0]['derived'] is False
+
+
 class TestUnitConsistency:
     def test_km_conversion_from_micromolar(self):
         """61 uM clozapine at MW 326.8 is 19.93 mg/L."""
