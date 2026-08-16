@@ -299,13 +299,16 @@ def run_hepatic_extraction(req: HepaticExtractionRequest, db: Session=Depends(ge
     drug_pathways: dict[str, list[EnzymePathway]] = {}
     drug_inhibitor_targets: dict[str, list[tuple[str, float]]] = {}
     f_unbound: dict[str, float] = {}
-    from services.pk_simulator import _MW_APPROX
+    from services.molecular_weights import molecular_weight
     for mid in req.medication_ids:
         med = meds.get(mid)
         if med is None:
             continue
         gn = (med.generic_name or '').lower()
-        mw = _MW_APPROX.get(gn, 350.0)
+        # molecular_weight returns None rather than a silent default; the 350
+        # fallback here is retained only so this analysis endpoint keeps
+        # working for the one combination product that has no single value.
+        mw = molecular_weight(gn) or 350.0
         cl_total = float(med.clearance_l_per_h or 5.0)
         profiles = db.query(CYP450Profile).filter(CYP450Profile.medication_id == mid).all()
         pathways: list[EnzymePathway] = []

@@ -6,6 +6,7 @@ from typing import Any
 from services.enzyme_kinetics import CYP_KDEG, EnzymeParams, InhibitorParams, MBIParams, InductionParams, competitive_inhibition_rate, enzyme_activity_factor, enzyme_pool_derivative
 from services.dose_scheduler import DoseEvent, MedicationSchedule, build_dose_timeline
 from services.metabolite_tracker import MetaboliteParams, build_metabolite_ode_terms
+from services.molecular_weights import UNRESOLVABLE, molecular_weight
 from services.sourced_params import NORFLUOXETINE_CYP2D6_KI_MG_L, documented_tdi, smoking_induction_term
 CYP_ACTIVITY_MULTIPLIERS: dict[str, dict[str, float]] = {'CYP2D6': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP2C19': {'poor': 0.3, 'intermediate': 0.6, 'normal': 1.0, 'ultra-rapid': 2.0}, 'CYP3A4': {'normal': 1.0}, 'CYP1A2': {'normal': 1.0}}
 
@@ -339,7 +340,6 @@ def run_simulation(config: SimulationConfig) -> SimulationResult:
     steady_state_info = _compute_steady_state_info(time_hours, concentrations, config)
     dose_event_dicts = [{'time_h': de.time_h, 'dose_mg': de.dose_mg, 'drug_name': config.drugs[de.medication_index].generic_name} for de in dose_events]
     return SimulationResult(time_hours=time_hours, concentrations=concentrations, metabolite_concentrations=metabolite_concentrations, dose_events=dose_event_dicts, enzyme_activity=enzyme_activity, steady_state_info=steady_state_info, peripheral_concentrations=peripheral_concentrations, parameter_substitutions=list(config.parameter_substitutions))
-_MW_APPROX: dict[str, float] = {'fluoxetine': 309.3, 'sertraline': 306.2, 'paroxetine': 329.4, 'citalopram': 324.4, 'escitalopram': 324.4, 'fluvoxamine': 318.3, 'venlafaxine': 277.4, 'duloxetine': 297.4, 'desvenlafaxine': 263.4, 'amitriptyline': 277.4, 'nortriptyline': 263.4, 'clomipramine': 314.9, 'aripiprazole': 448.4, 'quetiapine': 383.5, 'olanzapine': 312.4, 'risperidone': 410.5, 'ziprasidone': 412.9, 'clozapine': 326.8, 'lurasidone': 492.7, 'paliperidone': 426.5, 'haloperidol': 375.9, 'chlorpromazine': 318.9, 'carbamazepine': 236.3, 'lamotrigine': 256.1, 'valproic acid': 144.2, 'bupropion': 239.7, 'trazodone': 371.9, 'mirtazapine': 265.4, 'buspirone': 385.5, 'alprazolam': 308.8, 'diazepam': 284.7, 'methadone': 309.4, 'tramadol': 263.4, 'propranolol': 259.3, 'donepezil': 379.5, 'buprenorphine': 467.6}
 
 def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d6_phenotype: str='normal', cyp2c19_phenotype: str='normal', strict: bool=False, substitutions: list[ParameterSubstitution] | None=None) -> list[DrugConfig]:
     """Build simulator configs from database rows.
@@ -386,12 +386,15 @@ def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d
                           default=5.0, reason='no clearance and no half-life to derive it from',
                           log=substitutions, strict=strict)
 
-        if gn in _MW_APPROX:
-            mw = _MW_APPROX[gn]
+        resolved_mw = molecular_weight(gn)
+        if resolved_mw is not None:
+            mw = resolved_mw
         else:
             mw = _resolve(None, drug=name, parameter='molecular_weight', unit='g/mol',
                           default=350.0,
-                          reason='molecular weight not tabulated; affects every uM to mg/L conversion',
+                          reason=UNRESOLVABLE.get(
+                              gn, 'molecular weight not tabulated; affects every '
+                                  'uM to mg/L conversion'),
                           log=substitutions, strict=strict)
         cyp_profiles = db_session.query(CYP450Profile).filter(CYP450Profile.medication_id == med_id).all()
         enzyme_substrates: list[EnzymeParams] = []
@@ -404,8 +407,9 @@ def build_drug_configs_from_db(db_session: Any, medication_ids: list[int], cyp2d
                 vmax_calibrated = cl * km_mg_l
                 enzyme_substrates.append(EnzymeParams(enzyme_name=cyp.enzyme, vmax=vmax_calibrated, km=km_mg_l, fraction_metabolized=float(cyp.fraction_metabolized or 0.5)))
             elif cyp.role == 'inhibitor' and cyp.ki_nm:
-                inh_mw = _MW_APPROX.get(gn, 350.0)
-                ki_mg_l = float(cyp.ki_nm) * inh_mw / 1000000.0
+                # Same drug, so reuse the molecular weight already resolved
+                # above rather than looking it up again with its own fallback.
+                ki_mg_l = float(cyp.ki_nm) * mw / 1000000.0
                 enzyme_inhibitions.append(InhibitorParams(enzyme_name=cyp.enzyme, ki=ki_mg_l, drug_index=idx))
                 # Mechanism-based inactivation is applied ONLY where a source
                 # documents it. Previously any inhibitor tagged "strong" was

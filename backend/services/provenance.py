@@ -102,10 +102,17 @@ class Citation:
     journal: str = ''
     year: int | None = None
     verified: bool = False
+    # Reference databases such as PubChem, DrugBank or CredibleMeds are
+    # authoritative but have no DOI. They are identified by an accession.
+    source_db: str | None = None
+    accession: str | None = None
+    source_url: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.doi and not self.pmid:
-            raise ValueError('Citation needs a DOI or a PMID')
+        if not self.doi and not self.pmid and not (self.source_db and self.accession):
+            raise ValueError(
+                'Citation needs a DOI, a PMID, or a source_db plus accession'
+            )
 
     @property
     def url(self) -> str | None:
@@ -113,12 +120,18 @@ class Citation:
             return f'https://doi.org/{self.doi}'
         if self.pmid:
             return f'https://pubmed.ncbi.nlm.nih.gov/{self.pmid}/'
+        if self.source_url:
+            return self.source_url
+        if self.source_db == 'PubChem' and self.accession:
+            return f'https://pubchem.ncbi.nlm.nih.gov/compound/{self.accession}'
         return None
 
     def short(self) -> str:
+        mark = '' if self.verified else ' [UNVERIFIED]'
+        if self.source_db:
+            return f'{self.source_db} {self.accession}{mark}'
         who = self.first_author or 'Unknown'
         when = self.year or '?'
-        mark = '' if self.verified else ' [UNVERIFIED]'
         return f'{who} et al. {self.journal} {when}{mark}'
 
 

@@ -417,6 +417,63 @@ class TestParameterSubstitutionVisibility:
         assert payload['parameter_substitutions'][0]['derived'] is False
 
 
+class TestMolecularWeights:
+    """Audit F-25. Molecular weight is a fixed chemical constant, so unlike an
+    uncertain PK parameter there is no defensible reason to estimate it."""
+
+    def test_every_seeded_medication_resolves_except_the_combination_product(self):
+        from database.connection import SessionLocal
+        from database.seed_db import create_tables, seed_if_empty
+        from models import Medication
+        from services.molecular_weights import UNRESOLVABLE, molecular_weight
+        create_tables()
+        seed_if_empty()
+        db = SessionLocal()
+        try:
+            names = {(m.generic_name or '').strip().lower()
+                     for m in db.query(Medication).all() if m.generic_name}
+        finally:
+            db.close()
+        unresolved = {n for n in names if molecular_weight(n) is None}
+        assert unresolved == set(UNRESOLVABLE), (
+            f'unexpected medications without a molecular weight: '
+            f'{unresolved - set(UNRESOLVABLE)}'
+        )
+
+    def test_values_are_plausible_organic_molecules(self):
+        from services.molecular_weights import MOLECULAR_WEIGHTS
+        for name, mw in MOLECULAR_WEIGHTS.items():
+            if name == 'lithium':
+                continue  # elemental ion, 6.94
+            assert 100.0 < mw < 700.0, f'{name} molecular weight {mw} is implausible'
+
+    def test_every_weight_is_traceable_to_a_pubchem_record(self):
+        from services.molecular_weights import MOLECULAR_WEIGHTS, pubchem_citation
+        for name in MOLECULAR_WEIGHTS:
+            cite = pubchem_citation(name)
+            assert cite is not None, f'{name} has no PubChem citation'
+            assert cite.accession and cite.url, f'{name} citation is incomplete'
+            assert cite.verified
+
+    def test_combination_product_returns_none_not_a_default(self):
+        from services.molecular_weights import molecular_weight
+        assert molecular_weight('ethinyl estradiol with norethindrone') is None, (
+            'a combination product has no single molecular weight and must not '
+            'be given one'
+        )
+
+    def test_lithium_uses_the_ion_not_the_carbonate(self):
+        from services.molecular_weights import molecular_weight
+        assert molecular_weight('lithium') == pytest.approx(6.94, abs=0.01)
+
+    def test_known_weights_match_independent_values(self):
+        from services.molecular_weights import molecular_weight
+        for name, expected in [('clozapine', 326.8), ('fluoxetine', 309.33),
+                               ('lorazepam', 321.2), ('zolpidem', 307.4),
+                               ('gabapentin', 171.24), ('topiramate', 339.36)]:
+            assert molecular_weight(name) == pytest.approx(expected, rel=0.005), name
+
+
 class TestUnitConsistency:
     def test_km_conversion_from_micromolar(self):
         """61 uM clozapine at MW 326.8 is 19.93 mg/L."""
